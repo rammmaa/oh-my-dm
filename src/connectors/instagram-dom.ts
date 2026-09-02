@@ -61,6 +61,9 @@ export function normalizeSenderLabel(value?: string | null): string | undefined 
   const patterns = [
     /^(.+?)님의? 프로필 사진$/,
     /^(.+?)님이 보낸 메시지(?:입니다)?$/,
+    /^(.+?)님의? 프로필 페이지(?:를)? 열기$/,
+    /^(.+?)의 프로필 페이지(?:를)? 열기$/,
+    /^open the profile page of (.+)$/i,
     /^(.+?) replied to you$/i,
     /^(.+?)님이 회원님에게 답장했습니다$/,
     /^(.+?)(?:'s|’s) profile picture$/i,
@@ -106,7 +109,7 @@ export function mergeMessageWindows(
 
 export function inheritGroupedSenders(messages: ChatMessage[]): ChatMessage[] {
   let lastExternalSender: string | undefined;
-  return messages.map((message) => {
+  const forwardFilled = messages.map((message) => {
     if (message.sender === "나") {
       lastExternalSender = undefined;
       return message;
@@ -117,6 +120,23 @@ export function inheritGroupedSenders(messages: ChatMessage[]): ChatMessage[] {
     }
     return lastExternalSender ? { ...message, sender: lastExternalSender } : message;
   });
+
+  // Instagram attaches the avatar/profile link to either edge of a consecutive
+  // message group depending on the current web layout. Fill from the following
+  // labelled bubble as well, but never cross one of our own messages.
+  let nextExternalSender: string | undefined;
+  return forwardFilled.map((_, index) => {
+    const message = forwardFilled[forwardFilled.length - 1 - index]!;
+    if (message.sender === "나") {
+      nextExternalSender = undefined;
+      return message;
+    }
+    if (message.sender !== "unknown") {
+      nextExternalSender = message.sender;
+      return message;
+    }
+    return nextExternalSender ? { ...message, sender: nextExternalSender } : message;
+  }).reverse();
 }
 
 function enrichUnknownSenders(

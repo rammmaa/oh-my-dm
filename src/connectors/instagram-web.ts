@@ -140,15 +140,29 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
 
     if (conversation.href.startsWith("button:")) {
       const index = Number(conversation.href.slice("button:".length));
-      await page.locator('[role="button"]').evaluateAll((elements, targetIndex) => {
+      await page.locator('[aria-label="Thread list"] [role="button"]').evaluateAll((elements, targetIndex) => {
         const rows = elements.filter((element) => {
           const rect = element.getBoundingClientRect();
+          const parts = [...new Set(
+            [...element.querySelectorAll("span")]
+              .map((part) => part.textContent?.replaceAll("\u00a0", " ").trim())
+              .filter((part): part is string => Boolean(part)),
+          )];
+          const text = parts.length >= 2
+            ? parts.join("\n")
+            : (element as HTMLElement).innerText.trim();
+          const hiddenVirtualRow =
+            rect.width === 0 &&
+            rect.height === 0 &&
+            text.includes("·") &&
+            Boolean(element.querySelector('img[alt="user-profile-picture"]'));
           return (
-            rect.x < 500 &&
-            rect.width > 300 &&
-            rect.height >= 60 &&
-            rect.height <= 90 &&
-            (element as HTMLElement).innerText.trim().length > 0
+            text.length > 0 &&
+            (hiddenVirtualRow ||
+              (rect.x < 500 &&
+                rect.width > 300 &&
+                rect.height >= 48 &&
+                rect.height <= 110))
           );
         });
         const target = rows[targetIndex];
@@ -281,35 +295,61 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
           })),
       );
 
-      let conversations = dedupeConversations(
+      const linkConversations = dedupeConversations(
         rawConversations
           .map(normalizeConversation)
           .filter((item): item is Conversation => item !== undefined),
       );
-      if (conversations.length === 0) {
-        const rawButtonConversations = await page
-          .locator('[role="button"]')
+      const rawButtonConversations = await page
+          .locator('[aria-label="Thread list"] [role="button"]')
           .evaluateAll((elements): RawConversation[] => {
             const rows = elements.filter((element) => {
               const rect = element.getBoundingClientRect();
+              const parts = [...new Set(
+                [...element.querySelectorAll("span")]
+                  .map((part) => part.textContent?.replaceAll("\u00a0", " ").trim())
+                  .filter((part): part is string => Boolean(part)),
+              )];
+              const text = parts.length >= 2
+                ? parts.join("\n")
+                : (element as HTMLElement).innerText.trim();
+              const hiddenVirtualRow =
+                rect.width === 0 &&
+                rect.height === 0 &&
+                text.includes("·") &&
+                Boolean(element.querySelector('img[alt="user-profile-picture"]'));
               return (
-                rect.x < 500 &&
-                rect.width > 300 &&
-                rect.height >= 60 &&
-                rect.height <= 90 &&
-                (element as HTMLElement).innerText.trim().length > 0
+                text.length > 0 &&
+                (hiddenVirtualRow ||
+                  (rect.x < 500 &&
+                    rect.width > 300 &&
+                    rect.height >= 48 &&
+                    rect.height <= 110))
               );
             });
-            return rows.map((element, index) => ({
-              href: `button:${index}`,
-              text: (element as HTMLElement).innerText ?? "",
-              ariaLabel: element.getAttribute("aria-label"),
-            }));
+            return rows.map((element, index) => {
+              const parts = [...new Set(
+                [...element.querySelectorAll("span")]
+                  .map((part) => part.textContent?.replaceAll("\u00a0", " ").trim())
+                  .filter((part): part is string => Boolean(part)),
+              )];
+              return {
+                href: `button:${index}`,
+                text: parts.length >= 2
+                  ? parts.join("\n")
+                  : (element as HTMLElement).innerText.trim(),
+                ariaLabel: element.getAttribute("aria-label"),
+              };
+            });
           });
-        conversations = rawButtonConversations
+      const buttonConversations = rawButtonConversations
           .map(normalizeConversation)
           .filter((item): item is Conversation => item !== undefined);
-      }
+      // The current Instagram layout exposes complete rows as buttons while
+      // anchors can be partial (notably omitting the active thread).
+      const conversations = buttonConversations.length > 0
+        ? buttonConversations
+        : linkConversations;
 
       const routeConversationId = url.match(/\/direct\/t\/([^/?#]+)/)?.[1];
       const activeConversationId = routeConversationId
@@ -389,7 +429,7 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
                   label &&
                   label !== ownLabel &&
                   label.length <= 120 &&
-                  (/프로필 사진|profile picture|보낸 메시지/.test(label)),
+                  (/프로필 사진|profile picture|보낸 메시지|프로필 페이지|open the profile page of/i.test(label)),
                 ),
               ) ?? null;
               container = container.parentElement;
@@ -467,7 +507,7 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
                   Boolean(
                     label &&
                     label.length <= 120 &&
-                    /프로필 사진|profile picture|보낸 메시지/.test(label),
+                    /프로필 사진|profile picture|보낸 메시지|프로필 페이지|open the profile page of/i.test(label),
                   ),
                 );
                 if (profileLabel) {
