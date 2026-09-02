@@ -1,0 +1,61 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  filterSlashCommands,
+  findSlashCommand,
+  getSelectionWindow,
+  parseSubmission,
+  wrapSelectionIndex,
+} from "../src/ui/slash-commands.js";
+
+test("slash command를 파싱한다", () => {
+  assert.deepEqual(parseSubmission("/open 김태현"), {
+    kind: "command",
+    name: "open",
+    args: ["김태현"],
+  });
+});
+
+test("이중 slash는 일반 메시지로 처리한다", () => {
+  assert.deepEqual(parseSubmission("//hello"), { kind: "message", text: "/hello" });
+});
+
+test("명령 이름과 별칭을 검색한다", () => {
+  assert.equal(filterSlashCommands("/ref")[0]?.name, "refresh");
+  assert.equal(findSlashCommand("q")?.name, "exit");
+  assert.equal(findSlashCommand("quit")?.name, "exit");
+  assert.equal(findSlashCommand("ls")?.name, "conversations");
+  assert.equal(findSlashCommand("connectors")?.name, "connectors");
+  assert.equal(findSlashCommand("status")?.name, "connectors");
+  assert.equal(findSlashCommand("s")?.name, "connectors");
+  assert.equal(findSlashCommand("older")?.name, "history");
+  assert.equal(findSlashCommand("models")?.name, "model");
+});
+
+test("slash 뒤 공백이 있어도 exit 명령을 파싱한다", () => {
+  assert.deepEqual(parseSubmission("/ exit"), {
+    kind: "command",
+    name: "exit",
+    args: [],
+  });
+});
+
+test("command palette 선택이 위아래로 순환한다", () => {
+  assert.equal(wrapSelectionIndex(8, 1, 9), 0);
+  assert.equal(wrapSelectionIndex(0, -1, 8), 7);
+  assert.equal(wrapSelectionIndex(2, 1, 0), 0);
+});
+
+test("선택 항목이 창 아래를 넘으면 목록을 위로 스크롤한다", () => {
+  assert.deepEqual(getSelectionWindow([0, 1, 2, 3, 4], 3, 3), {
+    items: [1, 2, 3],
+    start: 1,
+    end: 4,
+  });
+  assert.deepEqual(getSelectionWindow([0, 1, 2, 3, 4], 0, 3), {
+    items: [0, 1, 2],
+    start: 0,
+    end: 3,
+  });
+});

@@ -1,0 +1,33 @@
+{
+  "name": "oh-my-dm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "oh-my-dm": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "node --import tsx src/cli.tsx",
+    "postinstall": "node scripts/patch-ink-static-fullscreen.mjs && playwright-core install chromium-headless-shell",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/**/*.test.ts"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "ink": "^7.1.1",
+    "ink-text-input": "^6.0.0",
+    "playwright-core": "^1.62.1",
+    "react": "^19.2.8",
+    "string-width": "^8.2.2",
+    "wrap-ansi": "^10.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "@types/react": "^19.2.18",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2"
+  }
+}
