@@ -19,22 +19,21 @@ Version rules:
 
 ## One-time npm setup
 
-The package does not exist on npm yet, so bootstrap it once:
+The package does not exist on npm yet, so bootstrap it once without an automation token:
 
-1. Create an npm granular access token with publish access to `oh-my-dm`.
-2. Add it as the repository secret `NPM_TOKEN`.
-3. Complete the first GitHub release through Release Please. `publish.yml` will publish the package using that token.
-4. In the new npm package settings, add a GitHub Actions trusted publisher:
+1. Enable two-factor authentication on the maintainer's npm account.
+2. Run `npm publish --access public --provenance=false --otp=<current OTP>` locally for `0.1.0`.
+3. In the new npm package settings, add a GitHub Actions trusted publisher:
    - Organization or user: `stacking-money-forever`
    - Repository: `oh-my-dm`
    - Workflow: `publish.yml`
    - Environment: `npm`
    - Allowed action: `npm publish`
-5. Delete the `NPM_TOKEN` repository secret. Every later release uses short-lived OIDC credentials.
+4. Create the matching `v0.1.0` GitHub Release. The workflow detects that `0.1.0` already exists and safely skips republishing it.
 
 The GitHub environment named `npm` already exists. Optional required reviewers can protect production publishing.
 
-The workflow publishes only from a non-prerelease GitHub Release whose tag exactly matches `package.json`. It has no manual publish trigger and safely skips a version that already exists on npm. Trusted publishing uses OIDC and npm provenance, so no long-lived npm token remains after bootstrap.
+The workflow publishes only from a non-prerelease GitHub Release whose tag exactly matches `package.json`. It has no manual publish trigger and safely skips a version that already exists on npm. Every automated release uses Trusted Publishing with short-lived OIDC credentials and npm provenance; no npm automation token is stored in GitHub.
 
 ## One-time GitHub release setup
 

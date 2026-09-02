@@ -14,8 +14,6 @@ jobs:
     runs-on: ubuntu-latest
     environment: npm
     timeout-minutes: 15
-    env:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -43,11 +41,6 @@ jobs:
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
           fi
-      - name: Publish first release with bootstrap token
-        if: steps.registry.outputs.published != 'true' && env.NPM_TOKEN != ''
-        run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
       - name: Publish with npm trusted publishing
-        if: steps.registry.outputs.published != 'true' && env.NPM_TOKEN == ''
+        if: steps.registry.outputs.published != 'true'
         run: npm publish --access public --provenance
