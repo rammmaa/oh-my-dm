@@ -31,6 +31,8 @@ test("명령 이름과 별칭을 검색한다", () => {
   assert.equal(findSlashCommand("s")?.name, "connectors");
   assert.equal(findSlashCommand("older")?.name, "history");
   assert.equal(findSlashCommand("models")?.name, "model");
+  assert.equal(findSlashCommand("lang")?.name, "language");
+  assert.match(filterSlashCommands("/", "en")[0]?.description ?? "", /commands/i);
 });
 
 test("slash 뒤 공백이 있어도 exit 명령을 파싱한다", () => {

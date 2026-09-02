@@ -1,0 +1,37 @@
+name: Publish to npm
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    environment: npm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - name: Update npm for trusted publishing
+        run: npm install --global npm@latest
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Verify release version
+        if: github.event_name == 'release'
+        run: test "v$(node -p 'require("./package.json").version')" = "${{ github.event.release.tag_name }}"
+      - run: npm publish --access public --provenance

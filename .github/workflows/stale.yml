@@ -1,0 +1,32 @@
+name: Mark stale threads
+
+on:
+  schedule:
+    - cron: "17 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v10
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          days-before-stale: 60
+          days-before-close: 14
+          stale-issue-label: "status: stale"
+          stale-pr-label: "status: stale"
+          exempt-issue-labels: "status: pinned,type: security"
+          exempt-pr-labels: "status: pinned"
+          stale-issue-message: >-
+            This issue has been inactive for 60 days. Add current reproduction details
+            if it is still relevant. 60일 동안 활동이 없어 stale로 표시했습니다.
+          stale-pr-message: >-
+            This pull request has been inactive for 60 days. Please rebase and update
+            its status if you want to continue. 60일 동안 활동이 없어 stale로 표시했습니다.
+          close-issue-message: "Closing after 14 additional days of inactivity. 필요하면 새 정보와 함께 다시 열어 주세요."
+          close-pr-message: "Closing after 14 additional days of inactivity. 계속 진행하려면 새 PR을 열어 주세요."

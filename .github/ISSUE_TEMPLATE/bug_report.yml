@@ -1,0 +1,64 @@
+name: Bug report / 버그 제보
+description: Report a reproducible problem without private chat data.
+title: "bug: "
+labels: ["type: bug", "status: needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Never attach cookies, browser profiles, real messages, or personal information.
+        버그를 제보해 주셔서 감사합니다. 쿠키, 브라우저 프로필, 실제 대화 및 개인정보를 첨부하지 마세요.
+  - type: checkboxes
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and discussions. / 기존 issue와 discussion을 검색했습니다.
+          required: true
+        - label: I removed all private data. / 개인정보를 모두 제거했습니다.
+          required: true
+  - type: dropdown
+    id: connector
+    attributes:
+      label: Connector
+      options: [Instagram, KakaoTalk, Both, UI or CLI, Not sure]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: oh-my-dm version
+      placeholder: "0.1.0 or commit SHA"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: "macOS 15.6, Terminal.app, Node.js 22.18"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened? / 어떤 문제가 발생했나요?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps / 재현 방법
+      placeholder: "1. Run ...\n2. Enter ...\n3. See ..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior / 기대 동작
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics / 개인정보를 제거한 진단 정보
+      description: Include `oh-my-dm doctor` output if relevant. Do not include chat content.
+      render: shell

@@ -10,8 +10,8 @@ import {
   filterSlashCommands,
   findSlashCommand,
   getSelectionWindow,
+  getSlashCommands,
   parseSubmission,
-  SLASH_COMMANDS,
   type SlashCommand,
   wrapSelectionIndex,
 } from "./slash-commands.js";
@@ -36,18 +36,27 @@ import {
 import { padToWidth, truncateToWidth } from "./text-layout.js";
 import { formatUserMessageLines } from "./user-message.js";
 import { ImeTextInput } from "./ime-text-input.js";
+import {
+  getCopy,
+  isLanguagePreference,
+  LANGUAGE_OPTIONS,
+  resolveLanguage,
+  type LanguagePreference,
+} from "./i18n.js";
 
 interface AppProps {
   connector: ChatConnector;
   initialThemeId?: string;
   initialModelId?: string;
   initialModelEffort?: string;
+  initialLanguage?: LanguagePreference;
   onThemeChange?: (themeId: string) => void | Promise<void>;
   onModelChange?: (modelId: string, effort?: ModelEffort) => void | Promise<void>;
+  onLanguageChange?: (language: LanguagePreference) => void | Promise<void>;
 }
 
 type ConversationFilter = "all" | "unread";
-type ViewMode = "chat" | "history" | "conversations" | "connectors" | "model" | "effort" | "theme";
+type ViewMode = "chat" | "history" | "conversations" | "connectors" | "model" | "effort" | "theme" | "language";
 type TranscriptItem =
   | { id: string; kind: "signature"; full: boolean }
   | { id: string; kind: "message"; message: ChatSnapshot["messages"][number] };
@@ -57,8 +66,10 @@ export function App({
   initialThemeId,
   initialModelId,
   initialModelEffort,
+  initialLanguage = "auto",
   onThemeChange,
   onModelChange,
+  onLanguageChange,
 }: AppProps) {
   const { exit } = useApp();
   const { stdout, write } = useStdout();
@@ -88,6 +99,8 @@ export function App({
   });
   const [effortModelId, setEffortModelId] = useState(() => getDisplayModel(initialModelId ?? DEFAULT_MODEL_ID).id);
   const [effortIndex, setEffortIndex] = useState(0);
+  const [languagePreference, setLanguagePreference] = useState<LanguagePreference>(initialLanguage);
+  const [languageIndex, setLanguageIndex] = useState(0);
   const [transcript, setTranscript] = useState<TranscriptItem[]>([
     { id: "signature", kind: "signature", full: terminalSize.columns >= 48 },
   ]);
@@ -103,9 +116,12 @@ export function App({
   const displayModel = getDisplayModel(modelId);
   const displayModelLabel = formatDisplayModel(displayModel, modelEffort);
   const effortModel = getDisplayModel(effortModelId);
+  const language = resolveLanguage(languagePreference);
+  const copy = getCopy(language);
+  const slashCommands = useMemo(() => getSlashCommands(language), [language]);
 
   const commandMode = input.startsWith("/") && !input.startsWith("//");
-  const commandMatches = useMemo(() => filterSlashCommands(input), [input]);
+  const commandMatches = useMemo(() => filterSlashCommands(input, language), [input, language]);
   const commandWindowSize = Math.max(
     3,
     Math.min(8, Math.floor((terminalSize.rows - 14) / 2)),
@@ -187,6 +203,10 @@ export function App({
         Math.max(1, mainHeight - 4),
       ),
     [effortIndex, effortModel.efforts, mainHeight],
+  );
+  const languageWindow = useMemo(
+    () => getSelectionWindow([...LANGUAGE_OPTIONS], languageIndex, Math.max(1, mainHeight - 4)),
+    [languageIndex, mainHeight],
   );
   const showConversationPreview = terminalSize.columns >= 70;
   const showComposerHints = terminalSize.columns >= 72;
@@ -279,6 +299,15 @@ export function App({
     void Promise.resolve(onModelChange?.(selectedModel.id, effort)).catch(showError);
   };
 
+  const applyLanguage = (preference: LanguagePreference): void => {
+    const nextLanguage = resolveLanguage(preference);
+    setLanguagePreference(preference);
+    setNotice(getCopy(nextLanguage).languageChanged(
+      LANGUAGE_OPTIONS.find((item) => item.id === preference)?.label ?? preference,
+    ));
+    void Promise.resolve(onLanguageChange?.(preference)).catch(showError);
+  };
+
   const enterHistoryScreen = (): void => {
     if (!historyAlternateScreen.current) {
       stdout.write("\u001B[?1049h\u001B[2J\u001B[H");
@@ -321,7 +350,7 @@ export function App({
       { id: "signature", kind: "signature", full: terminalSize.columns >= 48 },
     ]);
     setTranscriptEpoch((epoch) => epoch + 1);
-    setNotice(`${conversation.title} 대화를 여는 중…`);
+    setNotice(copy.openingConversation(conversation.title));
     setError(undefined);
     write("\u001B[2J\u001B[3J\u001B[H");
     void connector
@@ -343,7 +372,7 @@ export function App({
     if (loadingOlder || !snapshot.activeConversationId || workspaceCleared) return;
     olderLoadInProgress.current = true;
     setLoadingOlder(true);
-    setNotice("이전 메시지를 불러오는 중…");
+    setNotice(copy.loadingOlder);
     void connector
       .loadOlderMessages()
       .then((added) => {
@@ -352,9 +381,9 @@ export function App({
           // Advance by one item so the user sees the next older message, not the
           // first item of the entire newly loaded batch.
           setMessageOffset((offset) => offset + 1);
-          setNotice(`이전 메시지 ${added}개를 불러왔습니다.`);
+          setNotice(copy.loadedOlder(added));
         } else {
-          setNotice("더 이전 메시지가 없습니다.");
+          setNotice(copy.noOlder);
         }
       })
       .catch(showError)
@@ -373,16 +402,16 @@ export function App({
     if (key.escape) {
       if (commandMode) {
         setInput("");
-        setNotice("명령 palette를 닫았습니다.");
+        setNotice(copy.paletteClosed);
       } else if (viewMode === "effort") {
         setViewMode("model");
         setNotice(undefined);
       } else if (viewMode === "history") {
         setViewMode("chat");
-        setNotice("채팅으로 돌아왔습니다.");
+        setNotice(copy.backToChat);
       } else if (viewMode !== "chat") {
         setViewMode("chat");
-        setNotice("채팅으로 돌아왔습니다.");
+        setNotice(copy.backToChat);
       } else {
         exit();
       }
@@ -413,6 +442,22 @@ export function App({
       const selectedTheme = UI_THEMES[themeIndex];
       if (selectedTheme) {
         applyTheme(selectedTheme);
+        setViewMode("chat");
+      }
+      return;
+    }
+    if (viewMode === "language" && key.upArrow) {
+      setLanguageIndex((index) => wrapSelectionIndex(index, -1, LANGUAGE_OPTIONS.length));
+      return;
+    }
+    if (viewMode === "language" && key.downArrow) {
+      setLanguageIndex((index) => wrapSelectionIndex(index, 1, LANGUAGE_OPTIONS.length));
+      return;
+    }
+    if (viewMode === "language" && key.return && !input) {
+      const selectedLanguage = LANGUAGE_OPTIONS[languageIndex];
+      if (selectedLanguage) {
+        applyLanguage(selectedLanguage.id);
         setViewMode("chat");
       }
       return;
@@ -458,12 +503,12 @@ export function App({
     }
     if (viewMode === "chat" && !input && (key.upArrow || key.pageUp)) {
       if (!snapshot.activeConversationId || workspaceCleared) {
-        setNotice("먼저 대화를 선택하세요.");
+        setNotice(copy.chooseConversationFirst);
         return;
       }
       enterHistoryScreen();
       setMessageOffset(key.pageUp ? messageWindow.maxOffset : 0);
-      setNotice("과거 대화 내역입니다.");
+      setNotice(copy.historyNotice);
       if (key.pageUp) loadOlderMessages();
       return;
     }
@@ -492,10 +537,10 @@ export function App({
         : snapshot.conversations.find((item) => item.id === snapshot.activeConversationId),
     [snapshot, workspaceCleared],
   );
-  const activeTitle = activeConversation?.title ?? "대화를 선택하세요";
+  const activeTitle = activeConversation?.title ?? copy.selectConversation;
   const activeProvider = activeConversation?.provider ?? "instagram";
   const activePath =
-    activeTitle === "대화를 선택하세요"
+    !activeConversation
       ? "~/conversations"
       : `~/${activeProvider}/${toPathSegment(activeTitle)}`;
   const footerRows = Math.max(
@@ -519,7 +564,7 @@ export function App({
   const handleInputChange = (nextInput: string): void => {
     const nextCommandMode = nextInput.startsWith("/") && !nextInput.startsWith("//");
     if (nextCommandMode && !commandAlternateScreen.current && viewMode === "chat") {
-      const nextMatches = filterSlashCommands(nextInput);
+      const nextMatches = filterSlashCommands(nextInput, language);
       const nextPanelRows = 3 + Math.max(1, Math.min(commandWindowSize, nextMatches.length));
       const nextChromeRows = 4 + footerRows + nextPanelRows + (error ? 1 : 0);
       if (transcriptRows + nextChromeRows > terminalSize.rows) {
@@ -563,14 +608,14 @@ export function App({
     switch (command.name) {
       case "help":
         setNotice(
-          SLASH_COMMANDS.map((item) => item.usage).join(" · ") +
-            " · //문자 = /로 시작하는 메시지",
+          slashCommands.map((item) => item.usage).join(" · ") +
+            ` · ${copy.slashMessageHelp}`,
         );
         return;
       case "open": {
         const query = args.join(" ").trim().toLowerCase();
         if (!query) {
-          setNotice("사용법: /open <대화방 이름>");
+          setNotice(copy.openUsage);
           return;
         }
         const matches = snapshot.conversations.filter((conversation) =>
@@ -579,27 +624,27 @@ export function App({
         if (matches.length === 1) {
           openConversation(matches[0]!);
         } else if (matches.length === 0) {
-          setNotice(`“${args.join(" ")}”에 맞는 대화방이 없습니다.`);
+          setNotice(copy.noConversationMatch(args.join(" ")));
         } else {
-          setNotice(`후보: ${matches.slice(0, 5).map((item) => item.title).join(", ")}`);
+          setNotice(copy.candidates(matches.slice(0, 5).map((item) => item.title).join(", ")));
         }
         return;
       }
       case "conversations":
         setViewMode("conversations");
-        setNotice("대화방 목록입니다. ↑↓로 선택하고 Enter로 여세요.");
+        setNotice(copy.conversationsNotice);
         return;
       case "unread":
         setConversationFilter("unread");
         setViewMode("conversations");
         setSelectedIndex(0);
-        setNotice("안 읽은 대화만 표시합니다.");
+        setNotice(copy.unreadNotice);
         return;
       case "all":
         setConversationFilter("all");
         setViewMode("conversations");
         setSelectedIndex(0);
-        setNotice("모든 대화를 표시합니다.");
+        setNotice(copy.allNotice);
         return;
       case "connectors":
         setViewMode("connectors");
@@ -607,19 +652,19 @@ export function App({
         return;
       case "history":
         if (!snapshot.activeConversationId || workspaceCleared) {
-          setNotice("먼저 대화를 선택하세요.");
+          setNotice(copy.chooseConversationFirst);
           return;
         }
         setMessageOffset(0);
         enterHistoryScreen();
-        setNotice("과거 대화 내역입니다.");
+        setNotice(copy.historyNotice);
         return;
       case "model": {
         const requested = args.join(" ").trim();
         if (requested) {
           const selectedModel = findDisplayModel(requested);
           if (!selectedModel) {
-            setNotice(`모델을 찾을 수 없습니다: ${requested}`);
+            setNotice(copy.modelNotFound(requested));
             return;
           }
           const requestedEffort = effortFromModelValue(requested);
@@ -641,7 +686,7 @@ export function App({
         if (requested) {
           const selectedTheme = findTheme(requested);
           if (!selectedTheme) {
-            setNotice(`테마를 찾을 수 없습니다: ${requested}`);
+            setNotice(copy.themeNotFound(requested));
             return;
           }
           applyTheme(selectedTheme);
@@ -652,10 +697,26 @@ export function App({
         setNotice(undefined);
         return;
       }
+      case "language": {
+        const requested = args[0]?.trim().toLowerCase();
+        if (requested) {
+          if (!isLanguagePreference(requested)) {
+            setNotice(copy.languageUsage);
+            return;
+          }
+          applyLanguage(requested);
+          setViewMode("chat");
+          return;
+        }
+        setLanguageIndex(Math.max(0, LANGUAGE_OPTIONS.findIndex((item) => item.id === languagePreference)));
+        setViewMode("language");
+        setNotice(undefined);
+        return;
+      }
       case "refresh":
-        setNotice("connector 화면을 다시 읽는 중…");
+        setNotice(copy.refreshing);
         await connector.refresh();
-        setNotice("새로고침했습니다.");
+        setNotice(copy.refreshed);
         return;
       case "clear":
         // Static output has already been committed to terminal scrollback. Reset both
@@ -690,11 +751,11 @@ export function App({
       if (commandAlternateScreen.current) {
         pendingAfterCommandScreen.current = command
           ? () => void executeCommand(command, parsed.args).catch(showError)
-          : () => setNotice(`알 수 없는 명령입니다: /${parsed.name}. /help로 명령을 확인하세요.`);
+          : () => setNotice(copy.unknownCommand(parsed.name));
         return;
       }
       if (!command) {
-        setNotice(`알 수 없는 명령입니다: /${parsed.name}. /help로 명령을 확인하세요.`);
+        setNotice(copy.unknownCommand(parsed.name));
         return;
       }
       void executeCommand(command, parsed.args).catch(showError);
@@ -702,7 +763,7 @@ export function App({
     }
 
     if (!snapshot.activeConversationId || workspaceCleared) {
-      setNotice("먼저 대화를 선택하세요.");
+      setNotice(copy.chooseConversationFirst);
       return;
     }
     setMessagesHidden(false);
@@ -778,7 +839,7 @@ export function App({
               <Text color={theme.muted}> · history</Text>
             </Text>
             {messageWindow.items.length === 0 ? (
-              <Text color={theme.muted}>표시할 메시지가 없습니다.</Text>
+              <Text color={theme.muted}>{copy.noMessages}</Text>
             ) : (
               messageWindow.items.map((message) => {
                 const messageText = message.text.replaceAll("\n", " ");
@@ -820,8 +881,8 @@ export function App({
             <Box>
               <Text color={theme.muted}>
                 {loadingOlder
-                  ? "이전 메시지를 불러오는 중…"
-                  : "↑/PageUp: 이전 · ↓/PageDown: 최근 · Esc: 돌아가기"}
+                  ? copy.loadingOlder
+                  : copy.historyKeys}
               </Text>
             </Box>
           </Box>
@@ -831,8 +892,8 @@ export function App({
             {conversations.length === 0 ? (
               <Text color={theme.muted}>
                 {conversationFilter === "unread"
-                  ? "안 읽은 대화가 없습니다."
-                  : "대화 목록을 기다리는 중…"}
+                  ? copy.noUnread
+                  : copy.waitingConversations}
               </Text>
             ) : (
               conversationWindow.items.map((conversation, index) => {
@@ -867,10 +928,10 @@ export function App({
           </Box>
         ) : viewMode === "connectors" ? (
           <Box flexGrow={1} flexDirection="column" borderStyle="single" paddingX={2}>
-            <Text bold>Manage connectors</Text>
+            <Text bold>{copy.manageConnectors}</Text>
             <Text color={theme.muted}>{snapshot.connectors?.length ?? 1} connectors</Text>
             <Box marginTop={1} flexDirection="column">
-              <Text color={theme.muted}>Chat connectors</Text>
+              <Text color={theme.muted}>{copy.chatConnectors}</Text>
               {(snapshot.connectors ?? [
                 { id: "instagram", label: "Instagram", state: snapshot.state, detail: snapshot.detail },
               ]).map((connectorStatus, index) => (
@@ -887,20 +948,20 @@ export function App({
                     <Text color={theme.muted}>
                       source      {connectorStatus.id === "instagram" ? "instagram.com/direct · live DOM + WebSocket" : "KakaoTalk for macOS · persistent native bridge"}
                     </Text>
-                    <Text color={theme.muted}>storage     session only · messages are not persisted</Text>
+                    <Text color={theme.muted}>storage     {copy.storage}</Text>
                     {connectorStatus.detail && <Text color={theme.muted}>detail      {connectorStatus.detail}</Text>}
                   </Box>
                 </Box>
               ))}
             </Box>
             <Box marginTop={1}>
-              <Text color={theme.muted}>※ /refresh로 connector 상태를 다시 확인할 수 있습니다.</Text>
+              <Text color={theme.muted}>{copy.refreshConnectorsHelp}</Text>
             </Box>
           </Box>
         ) : viewMode === "model" ? (
           <Box flexGrow={1} flexDirection="column" borderStyle="single" paddingX={2}>
             <Text bold>
-              Choose a model <Text color={theme.muted}>· {DISPLAY_MODELS.length} models</Text>
+              {copy.chooseModel} <Text color={theme.muted}>· {DISPLAY_MODELS.length} models</Text>
             </Text>
             <Box flexDirection="column">
               {modelWindow.items.map((item, index) => {
@@ -909,19 +970,19 @@ export function App({
                 return (
                   <Text key={item.id} color={selected ? theme.accent : undefined}>
                     {selected ? "❯" : " "} {item.label.padEnd(24)} · {item.source}
-                    {item.id === modelId ? " · active" : ""}
+                    {item.id === modelId ? ` · ${copy.active}` : ""}
                   </Text>
                 );
               })}
             </Box>
             <Box>
-              <Text color={theme.muted}>↑/↓ to navigate · Enter to apply · Esc to cancel</Text>
+              <Text color={theme.muted}>{copy.navigateApplyCancel}</Text>
             </Box>
           </Box>
         ) : viewMode === "effort" ? (
           <Box flexGrow={1} flexDirection="column" borderStyle="single" paddingX={2}>
             <Text bold>
-              Choose reasoning effort <Text color={theme.muted}>· {effortModel.label}</Text>
+              {copy.chooseEffort} <Text color={theme.muted}>· {effortModel.label}</Text>
             </Text>
             <Box flexDirection="column">
               {effortWindow.items.map((effort, index) => {
@@ -929,30 +990,49 @@ export function App({
                 return (
                   <Text key={effort} color={absoluteIndex === effortIndex ? theme.accent : undefined}>
                     {absoluteIndex === effortIndex ? "❯" : " "} {effort}
-                    {effortModel.id === modelId && effort === modelEffort ? " · active" : ""}
+                    {effortModel.id === modelId && effort === modelEffort ? ` · ${copy.active}` : ""}
                   </Text>
                 );
               })}
             </Box>
             <Box>
-              <Text color={theme.muted}>↑/↓ to navigate · Enter to apply · Esc to models</Text>
+              <Text color={theme.muted}>{copy.navigateApplyBack}</Text>
             </Box>
           </Box>
         ) : viewMode === "theme" ? (
           <Box flexGrow={1} flexDirection="column" borderStyle="single" paddingX={2}>
-            <Text bold>Choose a theme</Text>
+            <Text bold>{copy.chooseTheme}</Text>
             <Text color={theme.muted}>{UI_THEMES.length} themes</Text>
             <Box marginTop={1} flexDirection="column">
               <Text color={theme.muted}>UI themes</Text>
               {UI_THEMES.map((item, index) => (
                 <Text key={item.id} color={index === themeIndex ? item.accent : undefined}>
                   {index === themeIndex ? "❯" : " "} {item.id.padEnd(12)} · {item.source}
-                  {item.id === themeId ? " · active" : ""}
+                  {item.id === themeId ? ` · ${copy.active}` : ""}
                 </Text>
               ))}
             </Box>
             <Box marginTop={1}>
-              <Text color={theme.muted}>↑/↓ to navigate · Enter to apply · Esc to cancel</Text>
+              <Text color={theme.muted}>{copy.navigateApplyCancel}</Text>
+            </Box>
+          </Box>
+        ) : viewMode === "language" ? (
+          <Box flexGrow={1} flexDirection="column" borderStyle="single" paddingX={2}>
+            <Text bold>{copy.chooseLanguage}</Text>
+            <Box marginTop={1} flexDirection="column">
+              {languageWindow.items.map((item, index) => {
+                const absoluteIndex = languageWindow.start + index;
+                const selected = absoluteIndex === languageIndex;
+                return (
+                  <Text key={item.id} color={selected ? theme.accent : undefined}>
+                    {selected ? "❯" : " "} {item.label.padEnd(10)} · {item.detail}
+                    {item.id === languagePreference ? ` · ${copy.active}` : ""}
+                  </Text>
+                );
+              })}
+            </Box>
+            <Box marginTop={1}>
+              <Text color={theme.muted}>{copy.navigateApplyCancel}</Text>
             </Box>
           </Box>
         ) : null}
@@ -961,13 +1041,13 @@ export function App({
       {commandMode && (
         <Box flexDirection="column" borderStyle="single" borderColor={theme.command} paddingX={1}>
           <Text bold color={theme.command}>
-            commands
+            {copy.commands}
             {commandMatches.length > commandWindowSize
               ? ` [${commandWindow.start + 1}-${commandWindow.end}/${commandMatches.length}]`
               : ""}
           </Text>
           {commandMatches.length === 0 ? (
-            <Text color={theme.muted}>일치하는 명령이 없습니다.</Text>
+            <Text color={theme.muted}>{copy.noMatchingCommands}</Text>
           ) : (
             <>
               {commandWindow.items.map((command, index) => {
@@ -999,7 +1079,7 @@ export function App({
             value={input}
             onChange={handleInputChange}
             onSubmit={submit}
-            placeholder="Type your message..."
+            placeholder={copy.placeholder}
             cursorPosition={
               viewMode === "chat"
                 ? { x: 5, y: chatSpacerHeight + commandPanelRows + 2 }
@@ -1009,7 +1089,7 @@ export function App({
         </Box>
         {showComposerHints && (
           <Text color={theme.muted}>
-            ↩: {viewMode === "conversations" ? "Open" : "Send"} · /: Commands · Esc: {viewMode === "chat" ? "Exit" : "Back"}
+            ↩: {viewMode === "conversations" ? copy.open : copy.send} · /: {copy.commands} · Esc: {viewMode === "chat" ? copy.exit : copy.back}
           </Text>
         )}
       </Box>

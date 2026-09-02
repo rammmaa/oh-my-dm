@@ -1,0 +1,23 @@
+name: Documentation / 문서 개선
+description: Report missing, incorrect, or unclear documentation.
+title: "docs: "
+labels: ["type: documentation", "status: needs-triage"]
+body:
+  - type: input
+    id: location
+    attributes:
+      label: Document or URL / 문서 또는 URL
+    validations:
+      required: true
+  - type: textarea
+    id: issue
+    attributes:
+      label: What should change? / 무엇을 바꿔야 하나요?
+    validations:
+      required: true
+  - type: checkboxes
+    attributes:
+      label: Language
+      options:
+        - label: English
+        - label: 한국어

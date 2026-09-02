@@ -1,10 +1,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import type { LanguagePreference } from "../ui/i18n.js";
+
 export interface UiSettings {
   theme?: string;
   model?: string;
   modelEffort?: string;
+  language?: LanguagePreference;
 }
 
 export class SettingsStore {

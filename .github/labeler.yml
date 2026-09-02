@@ -1,0 +1,33 @@
+"area: connectors":
+  - changed-files:
+      - any-glob-to-any-file: "src/connectors/**"
+"area: instagram":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/connectors/instagram*"
+          - "test/instagram*"
+"area: kakaotalk":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/connectors/kakao*"
+          - "scripts/kakao*"
+          - "test/kakao*"
+"area: ui":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/ui/**"
+          - "test/*layout*"
+          - "test/*input*"
+"area: documentation":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.md"
+          - "LICENSE"
+"area: ci":
+  - changed-files:
+      - any-glob-to-any-file: ".github/**"
+"dependencies":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "package.json"
+          - "package-lock.json"

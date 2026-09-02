@@ -1,0 +1,37 @@
+name: Feature request / 기능 제안
+description: Propose a focused improvement to oh-my-dm.
+title: "feat: "
+labels: ["type: feature", "status: needs-triage"]
+body:
+  - type: checkboxes
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and discussions. / 기존 제안을 검색했습니다.
+          required: true
+        - label: This does not request bulk messaging, anti-detection, or bypass behavior. / 대량 전송 또는 우회 기능이 아닙니다.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / 해결하려는 문제
+      description: Describe the user need, not only the proposed implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior / 제안 동작
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and tradeoffs / 대안과 트레이드오프
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Scope
+      options: [Instagram, KakaoTalk, Both connectors, Terminal UI, Developer tooling, Documentation]
+    validations:
+      required: true

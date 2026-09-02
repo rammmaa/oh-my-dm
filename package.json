@@ -1,13 +1,38 @@
 {
   "name": "oh-my-dm",
   "version": "0.1.0",
-  "private": true,
+  "description": "A local-first terminal client for Instagram and KakaoTalk.",
+  "license": "MIT",
+  "author": "Hyunwoo Gu <162293672+guhyunwoo@users.noreply.github.com>",
+  "homepage": "https://github.com/stacking-money-forever/oh-my-dm#readme",
+  "bugs": {
+    "url": "https://github.com/stacking-money-forever/oh-my-dm/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stacking-money-forever/oh-my-dm.git"
+  },
+  "keywords": [
+    "cli",
+    "tui",
+    "instagram",
+    "kakaotalk",
+    "messaging",
+    "terminal"
+  ],
+  "files": [
+    "dist",
+    "scripts",
+    "README.md",
+    "LICENSE"
+  ],
   "type": "module",
   "bin": {
     "oh-my-dm": "dist/cli.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist', {recursive:true, force:true})\"",
+    "build": "npm run clean && tsc -p tsconfig.build.json",
     "dev": "node --import tsx src/cli.tsx",
     "postinstall": "node scripts/patch-ink-static-fullscreen.mjs && playwright-core install chromium-headless-shell",
     "typecheck": "tsc --noEmit",
@@ -15,6 +40,10 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "dependencies": {
     "ink": "^7.1.1",

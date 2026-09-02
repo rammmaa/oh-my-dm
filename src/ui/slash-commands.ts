@@ -1,3 +1,5 @@
+import type { AppLanguage } from "./i18n.js";
+
 export interface SlashCommand {
   name: string;
   aliases?: string[];
@@ -5,35 +7,45 @@ export interface SlashCommand {
   usage: string;
 }
 
-export const SLASH_COMMANDS: SlashCommand[] = [
-  { name: "help", aliases: ["h"], description: "명령과 단축키 보기", usage: "/help" },
-  { name: "open", aliases: ["o"], description: "이름으로 대화방 열기", usage: "/open <이름>" },
+const COMMANDS: Array<Omit<SlashCommand, "description"> & { descriptions: Record<AppLanguage, string> }> = [
+  { name: "help", aliases: ["h"], descriptions: { ko: "명령과 단축키 보기", en: "Show commands and shortcuts" }, usage: "/help" },
+  { name: "open", aliases: ["o"], descriptions: { ko: "이름으로 대화방 열기", en: "Open a conversation by name" }, usage: "/open <name>" },
   {
     name: "conversations",
     aliases: ["chats", "ls"],
-    description: "대화방 목록 보기",
+    descriptions: { ko: "대화방 목록 보기", en: "Show conversations" },
     usage: "/conversations",
   },
-  { name: "unread", aliases: ["u"], description: "안 읽은 대화만 보기", usage: "/unread" },
-  { name: "all", aliases: ["a"], description: "모든 대화 보기", usage: "/all" },
+  { name: "unread", aliases: ["u"], descriptions: { ko: "안 읽은 대화만 보기", en: "Show unread conversations" }, usage: "/unread" },
+  { name: "all", aliases: ["a"], descriptions: { ko: "모든 대화 보기", en: "Show all conversations" }, usage: "/all" },
   {
     name: "connectors",
     aliases: ["status", "s"],
-    description: "채팅 connector 연결 상태 보기",
+    descriptions: { ko: "채팅 connector 연결 상태 보기", en: "Show connector status" },
     usage: "/connectors",
   },
   {
     name: "history",
     aliases: ["older"],
-    description: "과거 대화 내역 열기",
+    descriptions: { ko: "과거 대화 내역 열기", en: "Open message history" },
     usage: "/history",
   },
-  { name: "model", aliases: ["models"], description: "표시할 모델 선택", usage: "/model [이름]" },
-  { name: "theme", aliases: ["themes"], description: "UI 색상 테마 선택", usage: "/theme [이름]" },
-  { name: "refresh", aliases: ["r"], description: "connector 화면 다시 읽기", usage: "/refresh" },
-  { name: "clear", aliases: ["c"], description: "현재 메시지 화면 비우기", usage: "/clear" },
-  { name: "exit", aliases: ["quit", "q"], description: "oh-my-dm 종료", usage: "/exit" },
+  { name: "model", aliases: ["models"], descriptions: { ko: "표시할 모델 선택", en: "Choose a display model" }, usage: "/model [name]" },
+  { name: "theme", aliases: ["themes"], descriptions: { ko: "UI 색상 테마 선택", en: "Choose a UI theme" }, usage: "/theme [name]" },
+  { name: "language", aliases: ["lang"], descriptions: { ko: "표시 언어 선택", en: "Choose the display language" }, usage: "/language [auto|ko|en]" },
+  { name: "refresh", aliases: ["r"], descriptions: { ko: "connector 화면 다시 읽기", en: "Refresh connector views" }, usage: "/refresh" },
+  { name: "clear", aliases: ["c"], descriptions: { ko: "현재 메시지 화면 비우기", en: "Clear the current message view" }, usage: "/clear" },
+  { name: "exit", aliases: ["quit", "q"], descriptions: { ko: "oh-my-dm 종료", en: "Exit oh-my-dm" }, usage: "/exit" },
 ];
+
+export function getSlashCommands(language: AppLanguage = "ko"): SlashCommand[] {
+  return COMMANDS.map(({ descriptions, ...command }) => ({
+    ...command,
+    description: descriptions[language],
+  }));
+}
+
+export const SLASH_COMMANDS = getSlashCommands("ko");
 
 export type ParsedSubmission =
   | { kind: "empty" }
@@ -50,12 +62,13 @@ export function parseSubmission(value: string): ParsedSubmission {
   return { kind: "command", name: name.toLowerCase(), args };
 }
 
-export function filterSlashCommands(value: string): SlashCommand[] {
+export function filterSlashCommands(value: string, language: AppLanguage = "ko"): SlashCommand[] {
+  const commands = getSlashCommands(language);
   if (!value.startsWith("/") || value.startsWith("//")) return [];
   const query = value.slice(1).trimStart().split(/\s+/)[0]?.toLowerCase() ?? "";
-  if (!query) return SLASH_COMMANDS;
+  if (!query) return commands;
 
-  return SLASH_COMMANDS.filter(
+  return commands.filter(
     (command) =>
       command.name.startsWith(query) ||
       command.aliases?.some((alias) => alias.startsWith(query)) ||
@@ -64,7 +77,7 @@ export function filterSlashCommands(value: string): SlashCommand[] {
 }
 
 export function findSlashCommand(name: string): SlashCommand | undefined {
-  return SLASH_COMMANDS.find(
+  return getSlashCommands().find(
     (command) => command.name === name || command.aliases?.includes(name),
   );
 }
