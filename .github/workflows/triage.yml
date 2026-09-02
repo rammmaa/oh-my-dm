@@ -13,15 +13,16 @@ permissions:
 
 jobs:
   welcome:
+    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/first-interaction@v3
         with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          issue-message: >-
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          issue_message: >-
             Thanks for opening your first issue! A maintainer will triage it soon.
             Please make sure all logs and screenshots are free of personal data.
             첫 issue를 남겨주셔서 감사합니다. 로그와 스크린샷에서 개인정보를 제거했는지 확인해 주세요.
-          pr-message: >-
+          pr_message: >-
             Thanks for your first contribution! Please ensure the checklist is complete
             and CI passes. 첫 기여 감사합니다. PR 체크리스트와 CI 결과를 확인해 주세요.
