@@ -111,7 +111,6 @@ export function App({
   const olderLoadInProgress = useRef(false);
   const historyAlternateScreen = useRef(false);
   const commandAlternateScreen = useRef(false);
-  const pendingAfterCommandScreen = useRef<(() => void) | undefined>(undefined);
   const theme = getTheme(themeId);
   const displayModel = getDisplayModel(modelId);
   const displayModelLabel = formatDisplayModel(displayModel, modelEffort);
@@ -248,15 +247,6 @@ export function App({
     // the restored IME cursor position and duplicate the footer.
   }, [stdout, viewMode]);
 
-  useEffect(() => {
-    if (commandMode || !commandAlternateScreen.current) return;
-    stdout.write("\u001B[?1049l");
-    commandAlternateScreen.current = false;
-    const pending = pendingAfterCommandScreen.current;
-    pendingAfterCommandScreen.current = undefined;
-    pending?.();
-  }, [commandMode, stdout]);
-
   useEffect(
     () => () => {
       if (historyAlternateScreen.current) stdout.write("\u001B[?1049l");
@@ -320,6 +310,16 @@ export function App({
     if (!historyAlternateScreen.current) return;
     stdout.write("\u001B[?1049l");
     historyAlternateScreen.current = false;
+  };
+
+  const leaveCommandScreenImmediately = (): void => {
+    if (!commandAlternateScreen.current) return;
+    // Restore the primary buffer before changing React state. If the empty
+    // composer renders in the alternate buffer first, Ink caches that frame
+    // and later applies only a partial diff to the restored primary buffer.
+    // That leaves a stale cursor and erases the prompt or border.
+    stdout.write("\u001B[?1049l");
+    commandAlternateScreen.current = false;
   };
 
   const chooseModel = (selectedModel: DisplayModel): void => {
@@ -401,6 +401,7 @@ export function App({
     }
     if (key.escape) {
       if (commandMode) {
+        leaveCommandScreenImmediately();
         setInput("");
         setNotice(copy.paletteClosed);
       } else if (viewMode === "effort") {
@@ -563,6 +564,7 @@ export function App({
 
   const handleInputChange = (nextInput: string): void => {
     const nextCommandMode = nextInput.startsWith("/") && !nextInput.startsWith("//");
+    if (!nextCommandMode) leaveCommandScreenImmediately();
     if (nextCommandMode && !commandAlternateScreen.current && viewMode === "chat") {
       const nextMatches = filterSlashCommands(nextInput, language);
       const nextPanelRows = 3 + Math.max(1, Math.min(commandWindowSize, nextMatches.length));
@@ -615,7 +617,10 @@ export function App({
       case "open": {
         const query = args.join(" ").trim().toLowerCase();
         if (!query) {
-          setNotice(copy.openUsage);
+          setConversationFilter("all");
+          setSelectedIndex(0);
+          setViewMode("conversations");
+          setNotice(copy.conversationsNotice);
           return;
         }
         const matches = snapshot.conversations.filter((conversation) =>
@@ -743,17 +748,12 @@ export function App({
   const submit = (value: string): void => {
     const parsed = parseSubmission(value);
     if (parsed.kind === "empty") return;
+    leaveCommandScreenImmediately();
     setInput("");
     setError(undefined);
 
     if (parsed.kind === "command") {
       const command = findSlashCommand(parsed.name) ?? commandMatches[commandIndex];
-      if (commandAlternateScreen.current) {
-        pendingAfterCommandScreen.current = command
-          ? () => void executeCommand(command, parsed.args).catch(showError)
-          : () => setNotice(copy.unknownCommand(parsed.name));
-        return;
-      }
       if (!command) {
         setNotice(copy.unknownCommand(parsed.name));
         return;
