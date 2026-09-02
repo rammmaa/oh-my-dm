@@ -10,19 +10,31 @@ Releases are automated; maintainers should not edit versions or tags manually.
 4. Release Please creates a `vX.Y.Z` tag and GitHub Release.
 5. `publish.yml` verifies, builds, and publishes the exact tagged version to npm with provenance.
 
-`feat` creates a minor release, `fix` and `perf` create a patch release, and a breaking change creates a major release. Before 1.0, the Release Please configuration keeps breaking feature work within pre-1.0 versioning.
+Version rules:
+
+- `feat`: minor (`0.1.0` → `0.2.0`)
+- `fix` or `perf`: patch (`0.1.0` → `0.1.1`)
+- `docs`, `test`, `ci`, and `chore`: no release by themselves
+- `!` or `BREAKING CHANGE:`: minor before 1.0, major after 1.0
 
 ## One-time npm setup
 
-1. Create or claim the public `oh-my-dm` package on npm.
-2. In npm package settings, add a GitHub Actions trusted publisher:
+The package does not exist on npm yet, so bootstrap it once:
+
+1. Create an npm granular access token with publish access to `oh-my-dm`.
+2. Add it as the repository secret `NPM_TOKEN`.
+3. Complete the first GitHub release through Release Please. `publish.yml` will publish the package using that token.
+4. In the new npm package settings, add a GitHub Actions trusted publisher:
    - Organization or user: `stacking-money-forever`
    - Repository: `oh-my-dm`
    - Workflow: `publish.yml`
    - Environment: `npm`
-3. In GitHub repository settings, create an environment named `npm`. Optional required reviewers can protect production publishing.
+   - Allowed action: `npm publish`
+5. Delete the `NPM_TOKEN` repository secret. Every later release uses short-lived OIDC credentials.
 
-The workflow uses OIDC and npm provenance, so a long-lived `NPM_TOKEN` is not stored in GitHub. If trusted publishing is unavailable, add an `NPM_TOKEN` secret and explicitly pass it as `NODE_AUTH_TOKEN`; do not commit tokens.
+The GitHub environment named `npm` already exists. Optional required reviewers can protect production publishing.
+
+The workflow publishes only from a non-prerelease GitHub Release whose tag exactly matches `package.json`. It has no manual publish trigger. Trusted publishing uses OIDC and npm provenance, so no long-lived npm token remains after bootstrap.
 
 ## One-time GitHub release setup
 

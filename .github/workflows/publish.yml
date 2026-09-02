@@ -3,7 +3,6 @@ name: Publish to npm
 on:
   release:
     types: [published]
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,19 +10,20 @@ permissions:
 
 jobs:
   publish:
-    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    if: ${{ !github.event.release.prerelease }}
     runs-on: ubuntu-latest
     environment: npm
     timeout-minutes: 15
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.release.tag_name || github.ref }}
+          ref: ${{ github.event.release.tag_name }}
       - uses: actions/setup-node@v7
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-          cache: npm
       - name: Update npm for trusted publishing
         run: npm install --global npm@latest
       - name: Install dependencies
@@ -32,6 +32,12 @@ jobs:
       - run: npm test
       - run: npm run build
       - name: Verify release version
-        if: github.event_name == 'release'
         run: test "v$(node -p 'require("./package.json").version')" = "${{ github.event.release.tag_name }}"
-      - run: npm publish --access public --provenance
+      - name: Publish first release with bootstrap token
+        if: env.NPM_TOKEN != ''
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
+      - name: Publish with npm trusted publishing
+        if: env.NPM_TOKEN == ''
+        run: npm publish --access public --provenance
