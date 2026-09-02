@@ -33,11 +33,21 @@ jobs:
       - run: npm run build
       - name: Verify release version
         run: test "v$(node -p 'require("./package.json").version')" = "${{ github.event.release.tag_name }}"
+      - name: Check npm registry
+        id: registry
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          if npm view "oh-my-dm@$version" version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "oh-my-dm@$version is already published; skipping npm publish."
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Publish first release with bootstrap token
-        if: env.NPM_TOKEN != ''
+        if: steps.registry.outputs.published != 'true' && env.NPM_TOKEN != ''
         run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
       - name: Publish with npm trusted publishing
-        if: env.NPM_TOKEN == ''
+        if: steps.registry.outputs.published != 'true' && env.NPM_TOKEN == ''
         run: npm publish --access public --provenance

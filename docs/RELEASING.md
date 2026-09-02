@@ -34,7 +34,7 @@ The package does not exist on npm yet, so bootstrap it once:
 
 The GitHub environment named `npm` already exists. Optional required reviewers can protect production publishing.
 
-The workflow publishes only from a non-prerelease GitHub Release whose tag exactly matches `package.json`. It has no manual publish trigger. Trusted publishing uses OIDC and npm provenance, so no long-lived npm token remains after bootstrap.
+The workflow publishes only from a non-prerelease GitHub Release whose tag exactly matches `package.json`. It has no manual publish trigger and safely skips a version that already exists on npm. Trusted publishing uses OIDC and npm provenance, so no long-lived npm token remains after bootstrap.
 
 ## One-time GitHub release setup
 
