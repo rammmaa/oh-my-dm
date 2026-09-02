@@ -39,6 +39,7 @@ export class KakaoNativeConnector extends EventEmitter implements ChatConnector 
   private activeTitle?: string;
   private loadingOlder = false;
   private sending = false;
+  private stopped = false;
   private pendingOwnTexts: string[] = [];
   private snapshot: ChatSnapshot = {
     state: "starting",
@@ -52,6 +53,7 @@ export class KakaoNativeConnector extends EventEmitter implements ChatConnector 
   }
 
   public async start(): Promise<void> {
+    this.stopped = false;
     if (process.platform !== "darwin") {
       this.update({ ...this.snapshot, state: "error", detail: "KakaoTalk connector는 macOS 전용입니다." });
       return;
@@ -59,12 +61,23 @@ export class KakaoNativeConnector extends EventEmitter implements ChatConnector 
     try {
       await execFileAsync("open", ["-g", "/Applications/KakaoTalk.app"]);
       await new Promise((resolve) => setTimeout(resolve, 500));
+      if (this.stopped) return;
       // Keep slow inbox/message traversal off the process that handles user
       // actions. A send must never wait behind a background Accessibility read.
       await this.readBridge.start();
+      if (this.stopped) {
+        await this.readBridge.stop();
+        return;
+      }
       await this.actionBridge.start();
+      if (this.stopped) {
+        await Promise.all([this.readBridge.stop(), this.actionBridge.stop()]);
+        return;
+      }
       await this.readBridge.request("ensureMain", {});
+      if (this.stopped) return;
       await this.refresh();
+      if (this.stopped) return;
       this.refreshTimer = setInterval(() => void this.refresh(), 2_000);
     } catch (error) {
       this.update({ ...this.snapshot, state: "error", detail: errorMessage(error) });
@@ -72,13 +85,18 @@ export class KakaoNativeConnector extends EventEmitter implements ChatConnector 
   }
 
   public async stop(): Promise<void> {
+    this.stopped = true;
     if (this.refreshTimer) clearInterval(this.refreshTimer);
     this.refreshTimer = undefined;
-    await this.refreshPromise?.catch(() => undefined);
+    const refreshPromise = this.refreshPromise;
+    // Stop the bridge first so an Accessibility request cannot indefinitely
+    // delay shutdown after KakaoTalk itself has been closed.
     await Promise.all([this.readBridge.stop(), this.actionBridge.stop()]);
+    await refreshPromise?.catch(() => undefined);
   }
 
   public refresh(): Promise<void> {
+    if (this.stopped) return Promise.resolve();
     if (this.refreshPromise) return this.refreshPromise;
     this.refreshPromise = this.performRefresh().finally(() => {
       this.refreshPromise = undefined;
@@ -175,7 +193,7 @@ export class KakaoNativeConnector extends EventEmitter implements ChatConnector 
   }
 
   private async performRefresh(): Promise<void> {
-    if (this.sending) return;
+    if (this.stopped || this.sending) return;
     try {
       let conversations = this.snapshot.conversations;
       if (
@@ -226,6 +244,7 @@ export class KakaoNativeConnector extends EventEmitter implements ChatConnector 
         ).slice(-500);
         this.history.set(messageThreadId, messages);
       }
+      if (this.stopped) return;
       this.update({
         state: "connected",
         conversations,

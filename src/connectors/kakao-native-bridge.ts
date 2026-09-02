@@ -57,14 +57,22 @@ export class KakaoNativeBridge {
     if (!child) return;
     child.stdin.end();
     await new Promise<void>((resolve) => {
-      const timer = setTimeout(() => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(termTimer);
+        clearTimeout(killTimer);
+        resolve();
+      };
+      const termTimer = setTimeout(() => {
         child.kill("SIGTERM");
-        resolve();
       }, 1_000);
-      child.once("exit", () => {
-        clearTimeout(timer);
-        resolve();
-      });
+      const killTimer = setTimeout(() => {
+        child.kill("SIGKILL");
+      }, 2_000);
+      child.once("exit", finish);
+      child.once("close", finish);
     });
   }
 

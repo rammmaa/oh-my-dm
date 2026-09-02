@@ -56,7 +56,7 @@ if (provider !== "instagram" && command !== "chat") {
     { id: "instagram", label: "Instagram", connector: instagram },
     { id: "kakaotalk", label: "KakaoTalk", connector: new KakaoNativeConnector() },
   ]);
-  render(
+  const app = render(
     <App
       connector={connector}
       initialThemeId={settings.theme}
@@ -71,6 +71,11 @@ if (provider !== "instagram" && command !== "chat") {
       maxFps: 120,
     },
   );
+  // Ink's exit() resolves before React's async effect cleanup can finish.
+  // Keep the CLI alive just long enough to close browser/native bridge handles,
+  // otherwise they survive as orphans and continue driving KakaoTalk.
+  await app.waitUntilExit();
+  await connector.stop();
 } else if (command === "login") {
   console.log(cliText.login);
   const connector = new InstagramWebConnector({

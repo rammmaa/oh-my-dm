@@ -35,6 +35,7 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
   private browserLabel = "Chromium";
   private activeConversationOverride?: string;
   private loadingOlder = false;
+  private stopped = false;
   private readonly messageHistory = new Map<string, ChatMessage[]>();
   private snapshot: ChatSnapshot = {
     state: "starting",
@@ -101,6 +102,7 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
   }
 
   public async start(): Promise<void> {
+    this.stopped = false;
     await fs.mkdir(this.options.profileDir, { recursive: true, mode: 0o700 });
     const headless = this.options.headless ?? true;
     const browser = headless ? undefined : resolveBrowserExecutable();
@@ -110,6 +112,11 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
       headless,
       viewport: { width: 1100, height: 780 },
     });
+    if (this.stopped) {
+      await this.context.close();
+      this.context = undefined;
+      return;
+    }
 
     this.page = this.context.pages()[0] ?? (await this.context.newPage());
     await this.installWakeSignals(this.page);
@@ -118,6 +125,7 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
   }
 
   public async stop(): Promise<void> {
+    this.stopped = true;
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     this.refreshTimer = undefined;
     await this.context?.close();
@@ -229,6 +237,7 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
   }
 
   private scheduleRefresh(_reason: string, delay = 180): void {
+    if (this.stopped) return;
     // A busy MQTT/WebSocket connection must not keep pushing the refresh
     // forever into the future. Coalesce bursts into one bounded refresh.
     if (this.refreshTimer) {
@@ -242,6 +251,7 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
   }
 
   private async performRefresh(): Promise<void> {
+    if (this.stopped) return;
     if (this.refreshRunning) {
       this.refreshAgain = true;
       return;
