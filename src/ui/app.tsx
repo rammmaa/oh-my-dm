@@ -637,16 +637,21 @@ export function App({
         return;
       }
       case "conversations":
+        await connector.refresh();
+        setConversationFilter("all");
         setViewMode("conversations");
+        setSelectedIndex(0);
         setNotice(copy.conversationsNotice);
         return;
       case "unread":
+        await connector.refresh();
         setConversationFilter("unread");
         setViewMode("conversations");
         setSelectedIndex(0);
         setNotice(copy.unreadNotice);
         return;
       case "all":
+        await connector.refresh();
         setConversationFilter("all");
         setViewMode("conversations");
         setSelectedIndex(0);
