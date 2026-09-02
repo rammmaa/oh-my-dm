@@ -7,6 +7,8 @@ import {
   mergeMessageWindows,
   normalizeMessage,
   normalizeSenderLabel,
+  restoreTransientConversationGaps,
+  stabilizeButtonConversationIds,
   threadIdFromHref,
 } from "../src/connectors/instagram-dom.js";
 
@@ -31,6 +33,35 @@ test("대화 링크를 정규화한다", () => {
       preview: "오늘 보자",
       unread: true,
     },
+  );
+});
+
+test("버튼 기반 대화방은 위치가 바뀌어도 제목별 안정 ID를 사용한다", () => {
+  const conversations = [
+    { id: "button:0", href: "button:0", title: "김태현님", unread: false },
+    { id: "button:1", href: "button:1", title: "김태현님", unread: false },
+    { id: "button:2", href: "button:2", title: "박가은님", unread: false },
+  ];
+  const shifted = stabilizeButtonConversationIds(conversations);
+
+  assert.notEqual(shifted[0]?.id, shifted[1]?.id);
+  assert.match(shifted[2]?.id ?? "", /^button-thread:/);
+  assert.equal(shifted[2]?.href, "button:2");
+});
+
+test("커넥터 병합 중 사라진 Instagram 중간 가상화 행을 복원한다", () => {
+  const row = (id: string, title: string) => ({ id, href: `button:${id}`, title, unread: false });
+  const previous = [
+    row("a", "김태현 1"),
+    row("b", "김태현 2"),
+    row("c", "박가은"),
+    row("d", "방세준"),
+  ];
+  const current = [previous[0]!, previous[1]!, previous[3]!];
+
+  assert.deepEqual(
+    restoreTransientConversationGaps(previous, current).map((item) => item.title),
+    ["김태현 1", "김태현 2", "박가은", "방세준"],
   );
 });
 

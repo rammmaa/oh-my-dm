@@ -14,6 +14,8 @@ import {
   normalizeConversation,
   mergeMessageWindows,
   normalizeMessage,
+  restoreTransientConversationGaps,
+  stabilizeButtonConversationIds,
   type RawConversation,
   type RawMessage,
 } from "./instagram-dom.js";
@@ -140,7 +142,8 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
 
     if (conversation.href.startsWith("button:")) {
       const index = Number(conversation.href.slice("button:".length));
-      await page.locator('[aria-label="Thread list"] [role="button"]').evaluateAll((elements, targetIndex) => {
+      await page.locator('[aria-label="Thread list"] [role="button"]').evaluateAll((elements, target) => {
+        let threadRowsStarted = false;
         const rows = elements.filter((element) => {
           const rect = element.getBoundingClientRect();
           const parts = [...new Set(
@@ -151,24 +154,33 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
           const text = parts.length >= 2
             ? parts.join("\n")
             : (element as HTMLElement).innerText.trim();
-          const hiddenVirtualRow =
-            rect.width === 0 &&
-            rect.height === 0 &&
-            text.includes("·") &&
-            Boolean(element.querySelector('img[alt="user-profile-picture"]'));
-          return (
-            text.length > 0 &&
-            (hiddenVirtualRow ||
-              (rect.x < 500 &&
-                rect.width > 300 &&
-                rect.height >= 48 &&
-                rect.height <= 110))
-          );
+          const startsThreadRows =
+            text.includes("·") ||
+            (rect.x < 500 && rect.width > 300 && rect.height >= 48 && rect.height <= 110);
+          if (startsThreadRows) threadRowsStarted = true;
+          return threadRowsStarted && text.length > 0;
         });
-        const target = rows[targetIndex];
-        if (!(target instanceof HTMLElement)) throw new Error("대화 행을 찾지 못했습니다.");
-        target.click();
-      }, index);
+        const normalizedTitle = target.title.replaceAll("\u00a0", " ").trim();
+        const previewLead = target.preview
+          ?.replaceAll("\u00a0", " ")
+          .split(" · ")[0]
+          ?.trim();
+        const titleMatches = rows.filter((element) => {
+          const parts = [...new Set(
+            [...element.querySelectorAll("span")]
+              .map((part) => part.textContent?.replaceAll("\u00a0", " ").trim())
+              .filter((part): part is string => Boolean(part)),
+          )];
+          return parts[0] === normalizedTitle;
+        });
+        const matched = titleMatches.find((element) => {
+          if (!previewLead) return true;
+          const text = (element.textContent ?? "").replaceAll("\u00a0", " ");
+          return text.includes(previewLead);
+        }) ?? (titleMatches.length === 1 ? titleMatches[0] : rows[target.index]);
+        if (!(matched instanceof HTMLElement)) throw new Error("대화 행을 찾지 못했습니다.");
+        matched.click();
+      }, { index, title: conversation.title, preview: conversation.preview });
       this.activeConversationOverride = id;
       await page.waitForURL(/\/direct\/t\//, { timeout: 5_000 }).catch(() => undefined);
       this.scheduleRefresh("open-conversation", 100);
@@ -303,6 +315,7 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
       const rawButtonConversations = await page
           .locator('[aria-label="Thread list"] [role="button"]')
           .evaluateAll((elements): RawConversation[] => {
+            let threadRowsStarted = false;
             const rows = elements.filter((element) => {
               const rect = element.getBoundingClientRect();
               const parts = [...new Set(
@@ -313,19 +326,11 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
               const text = parts.length >= 2
                 ? parts.join("\n")
                 : (element as HTMLElement).innerText.trim();
-              const hiddenVirtualRow =
-                rect.width === 0 &&
-                rect.height === 0 &&
-                text.includes("·") &&
-                Boolean(element.querySelector('img[alt="user-profile-picture"]'));
-              return (
-                text.length > 0 &&
-                (hiddenVirtualRow ||
-                  (rect.x < 500 &&
-                    rect.width > 300 &&
-                    rect.height >= 48 &&
-                    rect.height <= 110))
-              );
+              const startsThreadRows =
+                text.includes("·") ||
+                (rect.x < 500 && rect.width > 300 && rect.height >= 48 && rect.height <= 110);
+              if (startsThreadRows) threadRowsStarted = true;
+              return threadRowsStarted && text.length > 0;
             });
             return rows.map((element, index) => {
               const parts = [...new Set(
@@ -342,14 +347,20 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
               };
             });
           });
-      const buttonConversations = rawButtonConversations
+      const buttonConversations = stabilizeButtonConversationIds(
+        rawButtonConversations
           .map(normalizeConversation)
-          .filter((item): item is Conversation => item !== undefined);
+          .filter((item): item is Conversation => item !== undefined),
+      );
       // The current Instagram layout exposes complete rows as buttons while
       // anchors can be partial (notably omitting the active thread).
-      const conversations = buttonConversations.length > 0
+      const capturedConversations = buttonConversations.length > 0
         ? buttonConversations
         : linkConversations;
+      const conversations = restoreTransientConversationGaps(
+        this.snapshot.conversations,
+        capturedConversations,
+      );
 
       const routeConversationId = url.match(/\/direct\/t\/([^/?#]+)/)?.[1];
       const activeConversationId = routeConversationId

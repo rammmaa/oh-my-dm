@@ -35,6 +35,44 @@ export function normalizeConversation(raw: RawConversation): Conversation | unde
   };
 }
 
+export function stabilizeButtonConversationIds(items: Conversation[]): Conversation[] {
+  const titleOccurrences = new Map<string, number>();
+  return items.map((item) => {
+    if (!item.href.startsWith("button:")) return item;
+    const occurrence = titleOccurrences.get(item.title) ?? 0;
+    titleOccurrences.set(item.title, occurrence + 1);
+    return {
+      ...item,
+      id: `button-thread:${stableHash(`${item.title}\0${occurrence}`)}`,
+    };
+  });
+}
+
+export function restoreTransientConversationGaps(
+  previous: Conversation[],
+  current: Conversation[],
+): Conversation[] {
+  if (previous.length === 0 || current.length === 0) return current;
+
+  const currentIds = new Set(current.map((item) => item.id));
+  const restored = [...current];
+  for (let index = 0; index < previous.length; index += 1) {
+    const missing = previous[index]!;
+    if (currentIds.has(missing.id)) continue;
+
+    const before = previous.slice(0, index).reverse().find((item) => currentIds.has(item.id));
+    const after = previous.slice(index + 1).find((item) => currentIds.has(item.id));
+    if (!before || !after) continue;
+
+    const beforeIndex = restored.findIndex((item) => item.id === before.id);
+    const afterIndex = restored.findIndex((item) => item.id === after.id);
+    if (beforeIndex < 0 || afterIndex <= beforeIndex) continue;
+    restored.splice(afterIndex, 0, missing);
+    currentIds.add(missing.id);
+  }
+  return restored;
+}
+
 export function normalizeMessage(
   threadId: string,
   raw: RawMessage,

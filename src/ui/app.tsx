@@ -56,6 +56,7 @@ interface AppProps {
 }
 
 type ConversationFilter = "all" | "unread";
+type ConversationProvider = "instagram" | "kakaotalk";
 type ViewMode = "chat" | "history" | "conversations" | "connectors" | "model" | "effort" | "theme" | "language";
 type TranscriptItem =
   | { id: string; kind: "signature"; full: boolean }
@@ -78,6 +79,7 @@ export function App({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [commandIndex, setCommandIndex] = useState(0);
   const [conversationFilter, setConversationFilter] = useState<ConversationFilter>("all");
+  const [conversationProvider, setConversationProvider] = useState<ConversationProvider>("instagram");
   const [viewMode, setViewMode] = useState<ViewMode>("chat");
   const [input, setInput] = useState("");
   const [inputEpoch, setInputEpoch] = useState(0);
@@ -182,10 +184,14 @@ export function App({
   );
   const conversations = useMemo(
     () =>
-      conversationFilter === "unread"
-        ? snapshot.conversations.filter((conversation) => conversation.unread)
-        : snapshot.conversations,
-    [conversationFilter, snapshot.conversations],
+      snapshot.conversations.filter((conversation) => {
+        const provider = conversation.provider ?? "instagram";
+        return (
+          provider === conversationProvider &&
+          (conversationFilter === "all" || conversation.unread)
+        );
+      }),
+    [conversationFilter, conversationProvider, snapshot.conversations],
   );
   const conversationWindow = useMemo(
     () => getSelectionWindow(conversations, selectedIndex, Math.max(1, mainHeight - 2)),
@@ -218,6 +224,7 @@ export function App({
     0,
     conversationContentWidth - 4 - conversationTitleWidth - 1,
   );
+  const conversationPathLabel = `~/conversations · ${conversationFilter}`;
 
   useEffect(() => {
     const onSnapshot = (next: ChatSnapshot) => {
@@ -499,6 +506,16 @@ export function App({
     if (viewMode === "conversations" && key.upArrow) {
       setSelectedIndex((index) => Math.max(0, index - 1));
     }
+    if (
+      viewMode === "conversations" &&
+      (key.tab || key.leftArrow || key.rightArrow)
+    ) {
+      setConversationProvider((provider) =>
+        provider === "instagram" ? "kakaotalk" : "instagram",
+      );
+      setSelectedIndex(0);
+      return;
+    }
     if (viewMode === "conversations" && key.downArrow) {
       setSelectedIndex((index) => Math.min(Math.max(0, conversations.length - 1), index + 1));
     }
@@ -639,6 +656,7 @@ export function App({
       case "conversations":
         await connector.refresh();
         setConversationFilter("all");
+        setConversationProvider("instagram");
         setViewMode("conversations");
         setSelectedIndex(0);
         setNotice(copy.conversationsNotice);
@@ -908,7 +926,35 @@ export function App({
           </Box>
         ) : viewMode === "conversations" ? (
           <Box flexGrow={1} flexDirection="column" borderStyle="single" paddingX={1}>
-            <Text bold color={theme.path}>~/conversations · {conversationFilter}</Text>
+            <Box>
+              <Text bold color={theme.path}>{conversationPathLabel}</Text>
+              <Box flexGrow={1} justifyContent="center">
+                <Text
+                  bold={conversationProvider === "instagram"}
+                  color={conversationProvider === "instagram" ? "#000000" : theme.muted}
+                  backgroundColor={
+                    conversationProvider === "instagram"
+                      ? CONNECTOR_COLORS.instagram
+                      : undefined
+                  }
+                >
+                  {" Instagram "}
+                </Text>
+                <Text color={theme.muted}> │ </Text>
+                <Text
+                  bold={conversationProvider === "kakaotalk"}
+                  color={conversationProvider === "kakaotalk" ? "#000000" : theme.muted}
+                  backgroundColor={
+                    conversationProvider === "kakaotalk"
+                      ? CONNECTOR_COLORS.kakaotalk
+                      : undefined
+                  }
+                >
+                  {" KakaoTalk "}
+                </Text>
+              </Box>
+              <Box width={stringWidth(conversationPathLabel)} />
+            </Box>
             {conversations.length === 0 ? (
               <Text color={theme.muted}>
                 {conversationFilter === "unread"
