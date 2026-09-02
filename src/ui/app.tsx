@@ -938,11 +938,13 @@ export function App({
                     key={`${conversation.id}\0${conversation.title}\0${conversation.preview ?? ""}`}
                   >
                     <Text color={selected ? theme.accent : undefined} bold={selected}>
-                      {prefix}<Text color={providerColor}>{providerMark}</Text> {title}
-                      {showConversationPreview && preview && (
-                        <Text color={selected ? theme.accent : theme.muted} bold={false}> {preview}</Text>
-                      )}
+                      {prefix}
                     </Text>
+                    <Text color={providerColor} bold={selected}>{providerMark}</Text>
+                    <Text bold={selected}>{` ${title}`}</Text>
+                    {showConversationPreview && preview && (
+                      <Text color={theme.muted}>{` ${preview}`}</Text>
+                    )}
                   </Box>
                 );
               })
