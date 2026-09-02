@@ -934,7 +934,9 @@ export function App({
                   conversationPreviewWidth,
                 );
                 return (
-                  <Box key={conversation.id}>
+                  <Box
+                    key={`${conversation.id}\0${conversation.title}\0${conversation.preview ?? ""}`}
+                  >
                     <Text color={selected ? theme.accent : undefined} bold={selected}>
                       {prefix}<Text color={providerColor}>{providerMark}</Text> {title}
                       {showConversationPreview && preview && (
