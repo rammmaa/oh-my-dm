@@ -2,7 +2,7 @@
   "name": "oh-my-dm",
   "version": "0.1.0",
   "description": "A local-first terminal client for Instagram and KakaoTalk.",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "author": "Hyunwoo Gu <162293672+guhyunwoo@users.noreply.github.com>",
   "homepage": "https://github.com/stacking-money-forever/oh-my-dm#readme",
   "bugs": {
@@ -24,7 +24,8 @@
     "dist",
     "scripts",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "NOTICE"
   ],
   "type": "module",
   "bin": {

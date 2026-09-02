@@ -124,4 +124,4 @@ Instagram DOM selector와 카카오톡 접근성 UI 구조는 서비스 업데�
 
 ## License
 
-[MIT](LICENSE)
+[Apache License 2.0](LICENSE)
