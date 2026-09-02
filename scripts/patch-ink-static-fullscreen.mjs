@@ -1,7 +1,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const inkPath = path.resolve("node_modules/ink/build/ink.js");
+// npm may hoist Ink above oh-my-dm instead of installing it in this package's
+// own node_modules directory. Resolve Ink with Node's module resolver so the
+// patch works for local, global, nested and hoisted installations alike.
+const inkEntryPath = fileURLToPath(import.meta.resolve("ink"));
+const inkBuildDir = path.dirname(inkEntryPath);
+const inkPath = path.join(inkBuildDir, "ink.js");
 const source = await fs.readFile(inkPath, "utf8");
 const original = "const isFullscreen = isTty && outputHeight >= viewportRows;";
 const replacement = `// Static output is committed above the interactive frame and also occupies
@@ -19,7 +25,7 @@ if (!source.includes(replacement)) {
   await fs.writeFile(inkPath, source.replace(original, replacement));
 }
 
-const logUpdatePath = path.resolve("node_modules/ink/build/log-update.js");
+const logUpdatePath = path.join(inkBuildDir, "log-update.js");
 let logUpdateSource = await fs.readFile(logUpdatePath, "utf8");
 const cursorHelper = `// With no trailing newline the terminal is already on the final visible row,
 // not on the virtual row after it. Cursor positioning must use that row as its
