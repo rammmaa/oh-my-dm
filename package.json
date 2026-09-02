@@ -29,6 +29,7 @@
   ],
   "type": "module",
   "bin": {
+    "dm": "dist/cli.js",
     "oh-my-dm": "dist/cli.js"
   },
   "scripts": {
