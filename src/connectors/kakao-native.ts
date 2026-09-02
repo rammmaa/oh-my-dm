@@ -35,6 +35,8 @@ export class KakaoNativeConnector extends EventEmitter implements ChatConnector 
   private refreshTimer?: NodeJS.Timeout;
   private refreshPromise?: Promise<void>;
   private conversationsRefreshedAt = 0;
+  private conversationLimit = 10;
+  private canLoadMoreConversations = true;
   private activeConversationId?: string;
   private activeTitle?: string;
   private loadingOlder = false;
@@ -192,6 +194,16 @@ export class KakaoNativeConnector extends EventEmitter implements ChatConnector 
     return Math.max(0, (this.history.get(this.activeConversationId)?.length ?? 0) - before);
   }
 
+  public async loadMoreConversations(): Promise<number> {
+    if (!this.canLoadMoreConversations) return 0;
+    await this.refreshPromise?.catch(() => undefined);
+    const before = this.snapshot.conversations.length;
+    this.conversationLimit += 10;
+    this.conversationsRefreshedAt = 0;
+    await this.refresh();
+    return Math.max(0, this.snapshot.conversations.length - before);
+  }
+
   private async performRefresh(): Promise<void> {
     if (this.stopped || this.sending) return;
     try {
@@ -200,7 +212,10 @@ export class KakaoNativeConnector extends EventEmitter implements ChatConnector 
         conversations.length === 0 ||
         Date.now() - this.conversationsRefreshedAt >= CONVERSATION_REFRESH_INTERVAL_MS
       ) {
-        const nativeRows = await this.readBridge.request<NativeConversation[]>("conversations", { limit: 10 });
+        const nativeRows = await this.readBridge.request<NativeConversation[]>("conversations", {
+          limit: this.conversationLimit,
+        });
+        this.canLoadMoreConversations = nativeRows.length >= this.conversationLimit;
         this.rowById.clear();
         conversations = nativeRows.map((row) => {
           const id = `room-${stableHash(row.title)}`;

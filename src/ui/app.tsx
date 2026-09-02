@@ -112,6 +112,7 @@ export function App({
   const transcriptConversation = useRef<string | undefined>(undefined);
   const emittedMessageIds = useRef(new Set<string>());
   const olderLoadInProgress = useRef(false);
+  const conversationLoadInProgress = useRef(false);
   const historyAlternateScreen = useRef(false);
   const commandAlternateScreen = useRef(false);
   const theme = getTheme(themeId);
@@ -401,6 +402,27 @@ export function App({
       });
   };
 
+  const loadMoreConversationRows = (): void => {
+    if (conversationLoadInProgress.current) return;
+    const previousCount = conversations.length;
+    conversationLoadInProgress.current = true;
+    setNotice(copy.loadingMoreConversations);
+    void connector
+      .loadMoreConversations(conversationProvider)
+      .then((added) => {
+        if (added > 0) {
+          setSelectedIndex(previousCount);
+          setNotice(copy.loadedMoreConversations(added));
+        } else {
+          setNotice(copy.noMoreConversations);
+        }
+      })
+      .catch(showError)
+      .finally(() => {
+        conversationLoadInProgress.current = false;
+      });
+  };
+
   useInput((value, key) => {
     if (key.ctrl && value === "c") {
       leaveHistoryScreenImmediately();
@@ -416,6 +438,13 @@ export function App({
         setViewMode("model");
         setNotice(undefined);
       } else if (viewMode === "history") {
+        // Instagram rebuilds message ids when its virtualized DOM window
+        // changes. None of the messages already visible in history should be
+        // appended to the terminal's Static transcript when the primary
+        // screen is restored.
+        for (const message of snapshot.messages) {
+          emittedMessageIds.current.add(message.id);
+        }
         setViewMode("chat");
         setNotice(copy.backToChat);
       } else if (viewMode !== "chat") {
@@ -517,7 +546,10 @@ export function App({
       return;
     }
     if (viewMode === "conversations" && key.downArrow) {
-      setSelectedIndex((index) => Math.min(Math.max(0, conversations.length - 1), index + 1));
+      const lastIndex = Math.max(0, conversations.length - 1);
+      if (selectedIndex >= lastIndex) loadMoreConversationRows();
+      else setSelectedIndex((index) => Math.min(lastIndex, index + 1));
+      return;
     }
     if (viewMode === "conversations" && key.return && !input) {
       const conversation = conversations[selectedIndex];
@@ -965,31 +997,44 @@ export function App({
               conversationWindow.items.map((conversation, index) => {
                 const absoluteIndex = conversationWindow.start + index;
                 const selected = absoluteIndex === selectedIndex;
-                const prefix = `${selected ? ">" : " "} ${conversation.unread ? "●" : " "} `;
+                const selectionMark = selected ? "> " : "  ";
+                const unreadMark = conversation.unread ? " ●" : "  ";
                 const isKakaoTalk = conversation.provider === "kakaotalk";
                 const providerMark = isKakaoTalk ? "K" : "I";
                 const providerColor = isKakaoTalk
                   ? CONNECTOR_COLORS.kakaotalk
                   : CONNECTOR_COLORS.instagram;
-                const title = padToWidth(
+                const titleCellWidth = Math.max(1, conversationTitleWidth - 1);
+                const title = truncateToWidth(
                   conversation.title,
-                  Math.max(1, conversationTitleWidth - 2),
+                  Math.max(0, titleCellWidth - 1),
                 );
                 const preview = truncateToWidth(
                   conversation.preview?.replaceAll("\n", " ") ?? "",
                   conversationPreviewWidth,
                 );
                 return (
-                  <Box
-                    key={`${conversation.id}\0${conversation.title}\0${conversation.preview ?? ""}`}
-                  >
-                    <Text color={selected ? theme.accent : undefined} bold={selected}>
-                      {prefix}
-                    </Text>
-                    <Text color={providerColor} bold={selected}>{providerMark}</Text>
-                    <Text bold={selected}>{` ${title}`}</Text>
-                    {showConversationPreview && preview && (
-                      <Text color={theme.muted}>{` ${preview}`}</Text>
+                  <Box key={conversation.id} width={conversationContentWidth}>
+                    <Box width={2} flexShrink={0}>
+                      <Text color={selected ? theme.accent : undefined}>
+                        {selectionMark}
+                      </Text>
+                    </Box>
+                    <Box width={1} flexShrink={0}>
+                      <Text color={providerColor}>{providerMark}</Text>
+                    </Box>
+                    <Box width={2} flexShrink={0}>
+                      <Text color={conversation.unread ? theme.accent : undefined}>
+                        {unreadMark}
+                      </Text>
+                    </Box>
+                    <Box width={titleCellWidth} flexShrink={0}>
+                      <Text>{` ${title}`}</Text>
+                    </Box>
+                    {showConversationPreview && (
+                      <Box width={conversationPreviewWidth + 1} flexShrink={0}>
+                        <Text color={theme.muted}>{` ${preview}`}</Text>
+                      </Box>
                     )}
                   </Box>
                 );

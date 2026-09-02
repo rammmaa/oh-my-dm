@@ -71,6 +71,14 @@ export class UnifiedChatConnector extends EventEmitter implements ChatConnector 
     return this.requireActive().connector.loadOlderMessages();
   }
 
+  public async loadMoreConversations(provider?: string): Promise<number> {
+    const entry = provider
+      ? this.entries.find((item) => item.id === provider)
+      : this.entries.find((item) => item.id === this.activeProviderId);
+    if (!entry) throw new Error(`connector를 찾을 수 없습니다: ${provider ?? "active"}`);
+    return entry.connector.loadMoreConversations();
+  }
+
   private requireActive(): ConnectorEntry {
     const entry = this.entries.find((item) => item.id === this.activeProviderId);
     if (!entry) throw new Error("먼저 대화를 선택하세요.");

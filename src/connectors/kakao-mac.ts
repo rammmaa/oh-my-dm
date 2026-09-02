@@ -26,6 +26,8 @@ export class KakaoMacConnector extends EventEmitter implements ChatConnector {
   private readonly history = new Map<string, ChatMessage[]>();
   private loadingOlder = false;
   private conversationsRefreshedAt = 0;
+  private conversationLimit = 10;
+  private canLoadMoreConversations = true;
   private snapshot: ChatSnapshot = {
     state: "starting",
     conversations: [],
@@ -189,6 +191,16 @@ export class KakaoMacConnector extends EventEmitter implements ChatConnector {
     return Math.max(0, (this.history.get(this.activeConversationId)?.length ?? 0) - before);
   }
 
+  public async loadMoreConversations(): Promise<number> {
+    if (!this.canLoadMoreConversations) return 0;
+    await this.waitForRefreshIdle();
+    const before = this.snapshot.conversations.length;
+    this.conversationLimit += 10;
+    this.conversationsRefreshedAt = 0;
+    await this.refresh();
+    return Math.max(0, this.snapshot.conversations.length - before);
+  }
+
   private async readConversations(): Promise<Conversation[]> {
     const countOutput = await runAppleScript([
       'tell application "System Events" to tell process "KakaoTalk" to tell window "카카오톡"',
@@ -200,7 +212,9 @@ export class KakaoMacConnector extends EventEmitter implements ChatConnector {
       'return (count of UI elements of chatTable) - 1',
       'end tell',
     ]);
-    const rowCount = Math.min(10, Number(countOutput) || 0);
+    const totalRows = Number(countOutput) || 0;
+    const rowCount = Math.min(this.conversationLimit, totalRows);
+    this.canLoadMoreConversations = rowCount >= this.conversationLimit;
     const rows: string[][] = [];
     for (let rowIndex = 1; rowIndex <= rowCount; rowIndex += 1) {
       const output = await runAppleScript([

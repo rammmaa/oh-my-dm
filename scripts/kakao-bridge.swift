@@ -142,22 +142,43 @@ final class KakaoAccessibility {
     try ensureMainWindow()
     let (_, table, scrollBar) = try mainList()
     try setAttribute(scrollBar, kAXValueAttribute as CFString, NSNumber(value: 0))
+    defer { try? setAttribute(scrollBar, kAXValueAttribute as CFString, NSNumber(value: 0)) }
     usleep(250_000)
-    let rows = children(of: table).filter { role(of: $0) == kAXRowRole as String }
-    return rows.prefix(max(1, limit)).enumerated().compactMap { offset, row in
-      guard let cell = children(of: row).first else { return nil }
+    var rows = children(of: table).filter { role(of: $0) == kAXRowRole as String }
+    let requestedCount = min(max(1, limit), rows.count)
+    let pageSize = 8
+    var result: [[String: Any]] = []
+
+    for offset in 0..<requestedCount {
+      // KakaoTalk virtualizes the descendants of rows outside the viewport.
+      // Move each page into view before resolving its labels; otherwise a row
+      // can expose stale title/preview nodes from a neighbouring conversation.
+      if offset > 0 && offset % pageSize == 0 {
+        let denominator = max(1, rows.count - 5)
+        let targetRow = offset + 1
+        let scrollValue = min(1, Double(max(0, targetRow - 4)) / Double(denominator))
+        try setAttribute(scrollBar, kAXValueAttribute as CFString, NSNumber(value: scrollValue))
+        usleep(250_000)
+        rows = children(of: table).filter { role(of: $0) == kAXRowRole as String }
+      }
+
+      guard offset < rows.count else { break }
+      let row = rows[offset]
+      guard let cell = children(of: row).first else { continue }
       let labels = descendants(of: cell, matching: kAXStaticTextRole as String)
-      guard let roomTitle = labels.first.map(title), !roomTitle.isEmpty else { return nil }
+      guard let roomTitle = labels.first.map(title), !roomTitle.isEmpty else { continue }
       let preview = descendants(of: cell, matching: kAXTextAreaRole as String).first.map(title) ?? ""
       let time = labels.last.map(title) ?? ""
-      return [
+      result.append([
         "row": offset + 1,
         "title": roomTitle,
         "preview": preview,
         "time": time,
         "unread": labels.count >= 3,
-      ]
+      ])
     }
+
+    return result
   }
 
   func prepareOpen(row: Int, expectedTitle: String) throws -> [String: Double] {

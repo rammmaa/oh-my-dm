@@ -73,6 +73,19 @@ export function restoreTransientConversationGaps(
   return restored;
 }
 
+export function mergeLoadedConversations(
+  existing: Conversation[],
+  incoming: Conversation[],
+): Conversation[] {
+  const incomingById = new Map(incoming.map((item) => [item.id, item]));
+  const merged = existing.map((item) => incomingById.get(item.id) ?? item);
+  const existingIds = new Set(existing.map((item) => item.id));
+  for (const item of incoming) {
+    if (!existingIds.has(item.id)) merged.push(item);
+  }
+  return merged;
+}
+
 export function normalizeMessage(
   threadId: string,
   raw: RawMessage,

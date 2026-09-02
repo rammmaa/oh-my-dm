@@ -7,6 +7,7 @@ import { UnifiedChatConnector } from "../src/connectors/unified.js";
 
 class FakeConnector extends EventEmitter implements ChatConnector {
   public sent: string[] = [];
+  public conversationLoads = 0;
 
   public constructor(private snapshot: ChatSnapshot) {
     super();
@@ -37,6 +38,11 @@ class FakeConnector extends EventEmitter implements ChatConnector {
 
   public async loadOlderMessages(): Promise<number> {
     return 3;
+  }
+
+  public async loadMoreConversations(): Promise<number> {
+    this.conversationLoads += 1;
+    return 4;
   }
 }
 
@@ -72,4 +78,7 @@ test("여러 connector의 대화방 id를 구분하고 선택한 provider로 전
   assert.deepEqual(kakao.sent, ["테스트"]);
   assert.deepEqual(instagram.sent, []);
   assert.equal(await connector.loadOlderMessages(), 3);
+  assert.equal(await connector.loadMoreConversations("instagram"), 4);
+  assert.equal(instagram.conversationLoads, 1);
+  assert.equal(kakao.conversationLoads, 0);
 });

@@ -48,6 +48,7 @@ export interface ChatConnector {
   stop(): Promise<void>;
   getSnapshot(): ChatSnapshot;
   refresh(): Promise<void>;
+  loadMoreConversations(provider?: string): Promise<number>;
   loadOlderMessages(): Promise<number>;
   openConversation(id: string): Promise<void>;
   sendMessage(text: string): Promise<void>;

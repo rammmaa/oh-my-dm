@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   normalizeConversation,
   inheritGroupedSenders,
+  mergeLoadedConversations,
   mergeMessageWindows,
   normalizeMessage,
   normalizeSenderLabel,
@@ -63,6 +64,22 @@ test("커넥터 병합 중 사라진 Instagram 중간 가상화 행을 복원한
     restoreTransientConversationGaps(previous, current).map((item) => item.title),
     ["김태현 1", "김태현 2", "박가은", "방세준"],
   );
+});
+
+test("아래로 불러온 Instagram 대화방을 기존 목록 뒤에 유지한다", () => {
+  const row = (id: string, preview = id) => ({
+    id,
+    href: `button:${id}`,
+    title: id,
+    preview,
+    unread: false,
+  });
+  const existing = [row("a"), row("b")];
+  const incoming = [row("b", "updated"), row("c")];
+
+  const merged = mergeLoadedConversations(existing, incoming);
+  assert.deepEqual(merged.map((item) => item.id), ["a", "b", "c"]);
+  assert.equal(merged[1]?.preview, "updated");
 });
 
 test("메시지 fingerprint가 안정적이다", () => {

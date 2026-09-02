@@ -12,6 +12,7 @@ import type {
 } from "../domain.js";
 import {
   normalizeConversation,
+  mergeLoadedConversations,
   mergeMessageWindows,
   normalizeMessage,
   restoreTransientConversationGaps,
@@ -37,6 +38,7 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
   private browserLabel = "Chromium";
   private activeConversationOverride?: string;
   private loadingOlder = false;
+  private preserveLoadedConversations = false;
   private stopped = false;
   private readonly messageHistory = new Map<string, ChatMessage[]>();
   private snapshot: ChatSnapshot = {
@@ -103,6 +105,39 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
     return Math.max(0, (this.messageHistory.get(threadId)?.length ?? 0) - previousCount);
   }
 
+  public async loadMoreConversations(): Promise<number> {
+    const page = this.requirePage();
+    while (this.refreshRunning) await page.waitForTimeout(50);
+    const previousCount = this.snapshot.conversations.length;
+    const moved = await page.locator('[aria-label="Thread list"]').evaluate((threadList): boolean => {
+      const candidates = [threadList, ...threadList.querySelectorAll<HTMLElement>("div")]
+        .filter((element): element is HTMLElement => element instanceof HTMLElement)
+        .filter((element) => {
+          const style = getComputedStyle(element);
+          return (
+            element.clientHeight > 120 &&
+            element.scrollHeight > element.clientHeight + 20 &&
+            /(auto|scroll)/.test(style.overflowY)
+          );
+        })
+        .sort((left, right) => left.clientWidth * left.clientHeight - right.clientWidth * right.clientHeight);
+      const scroller = candidates[0];
+      if (!scroller) return false;
+      const before = scroller.scrollTop;
+      scroller.scrollBy({
+        top: Math.max(300, Math.floor(scroller.clientHeight * 0.8)),
+        behavior: "instant",
+      });
+      return scroller.scrollTop !== before;
+    }).catch(() => false);
+    if (!moved) return 0;
+
+    await page.waitForTimeout(450);
+    this.preserveLoadedConversations = true;
+    await this.performRefresh();
+    return Math.max(0, this.snapshot.conversations.length - previousCount);
+  }
+
   public async start(): Promise<void> {
     this.stopped = false;
     await fs.mkdir(this.options.profileDir, { recursive: true, mode: 0o700 });
@@ -139,59 +174,86 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
     const page = this.requirePage();
     const conversation = this.snapshot.conversations.find((item) => item.id === id);
     if (!conversation) throw new Error(`대화를 찾을 수 없습니다: ${id}`);
+    const previousOverride = this.activeConversationOverride;
+    const previousUrl = page.url();
+
+    // Pin the target before clicking. Instagram emits DOM wake events during
+    // navigation, and a refresh triggered in that window must never reuse the
+    // previously opened conversation id.
+    this.activeConversationOverride = id;
 
     if (conversation.href.startsWith("button:")) {
       const index = Number(conversation.href.slice("button:".length));
-      await page.locator('[aria-label="Thread list"] [role="button"]').evaluateAll((elements, target) => {
-        let threadRowsStarted = false;
-        const rows = elements.filter((element) => {
-          const rect = element.getBoundingClientRect();
-          const parts = [...new Set(
-            [...element.querySelectorAll("span")]
-              .map((part) => part.textContent?.replaceAll("\u00a0", " ").trim())
-              .filter((part): part is string => Boolean(part)),
-          )];
-          const text = parts.length >= 2
-            ? parts.join("\n")
-            : (element as HTMLElement).innerText.trim();
-          const startsThreadRows =
-            text.includes("·") ||
-            (rect.x < 500 && rect.width > 300 && rect.height >= 48 && rect.height <= 110);
-          if (startsThreadRows) threadRowsStarted = true;
-          return threadRowsStarted && text.length > 0;
-        });
-        const normalizedTitle = target.title.replaceAll("\u00a0", " ").trim();
-        const previewLead = target.preview
-          ?.replaceAll("\u00a0", " ")
-          .split(" · ")[0]
-          ?.trim();
-        const titleMatches = rows.filter((element) => {
-          const parts = [...new Set(
-            [...element.querySelectorAll("span")]
-              .map((part) => part.textContent?.replaceAll("\u00a0", " ").trim())
-              .filter((part): part is string => Boolean(part)),
-          )];
-          return parts[0] === normalizedTitle;
-        });
-        const matched = titleMatches.find((element) => {
-          if (!previewLead) return true;
-          const text = (element.textContent ?? "").replaceAll("\u00a0", " ");
-          return text.includes(previewLead);
-        }) ?? (titleMatches.length === 1 ? titleMatches[0] : rows[target.index]);
-        if (!(matched instanceof HTMLElement)) throw new Error("대화 행을 찾지 못했습니다.");
-        matched.click();
-      }, { index, title: conversation.title, preview: conversation.preview });
-      this.activeConversationOverride = id;
-      await page.waitForURL(/\/direct\/t\//, { timeout: 5_000 }).catch(() => undefined);
-      this.scheduleRefresh("open-conversation", 100);
+      try {
+        await page.locator('[aria-label="Thread list"] [role="button"]').evaluateAll((elements, target) => {
+          let threadRowsStarted = false;
+          const rows = elements.filter((element) => {
+            const rect = element.getBoundingClientRect();
+            const parts = [...new Set(
+              [...element.querySelectorAll("span")]
+                .map((part) => part.textContent?.replaceAll("\u00a0", " ").trim())
+                .filter((part): part is string => Boolean(part)),
+            )];
+            const text = parts.length >= 2
+              ? parts.join("\n")
+              : (element as HTMLElement).innerText.trim();
+            const startsThreadRows =
+              text.includes("·") ||
+              (rect.x < 500 && rect.width > 300 && rect.height >= 48 && rect.height <= 110);
+            if (startsThreadRows) threadRowsStarted = true;
+            return threadRowsStarted && text.length > 0;
+          });
+          const normalizedTitle = target.title.replaceAll("\u00a0", " ").trim();
+          const previewLead = target.preview
+            ?.replaceAll("\u00a0", " ")
+            .split(" · ")[0]
+            ?.trim();
+          const titleMatches = rows.filter((element) => {
+            const parts = [...new Set(
+              [...element.querySelectorAll("span")]
+                .map((part) => part.textContent?.replaceAll("\u00a0", " ").trim())
+                .filter((part): part is string => Boolean(part)),
+            )];
+            return parts[0] === normalizedTitle;
+          });
+          const matched = titleMatches.find((element) => {
+            if (!previewLead) return true;
+            const text = (element.textContent ?? "").replaceAll("\u00a0", " ");
+            return text.includes(previewLead);
+          }) ?? (titleMatches.length === 1 ? titleMatches[0] : rows[target.index]);
+          if (!(matched instanceof HTMLElement)) throw new Error("대화 행을 찾지 못했습니다.");
+          matched.click();
+        }, { index, title: conversation.title, preview: conversation.preview });
+      } catch (error) {
+        this.activeConversationOverride = previousOverride;
+        throw error;
+      }
+      if (previousOverride !== id && page.url() === previousUrl) {
+        await page.waitForURL(
+          (url) => /\/direct\/t\//.test(url.pathname) && url.href !== previousUrl,
+          { timeout: 5_000 },
+        ).catch(() => undefined);
+      }
+      await this.refreshAfterConversationOpen(page);
       return;
     }
 
-    await page.goto(new URL(conversation.href, "https://www.instagram.com").href, {
-      waitUntil: "domcontentloaded",
-    });
-    this.activeConversationOverride = id;
-    this.scheduleRefresh("open-conversation", 100);
+    try {
+      await page.goto(new URL(conversation.href, "https://www.instagram.com").href, {
+        waitUntil: "domcontentloaded",
+      });
+      await this.refreshAfterConversationOpen(page);
+    } catch (error) {
+      this.activeConversationOverride = previousOverride;
+      throw error;
+    }
+  }
+
+  private async refreshAfterConversationOpen(page: Page): Promise<void> {
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    this.refreshTimer = undefined;
+    while (this.refreshRunning) await page.waitForTimeout(25);
+    await this.performRefresh();
   }
 
   public async sendMessage(text: string): Promise<void> {
@@ -357,10 +419,9 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
       const capturedConversations = buttonConversations.length > 0
         ? buttonConversations
         : linkConversations;
-      const conversations = restoreTransientConversationGaps(
-        this.snapshot.conversations,
-        capturedConversations,
-      );
+      const conversations = this.preserveLoadedConversations
+        ? mergeLoadedConversations(this.snapshot.conversations, capturedConversations)
+        : restoreTransientConversationGaps(this.snapshot.conversations, capturedConversations);
 
       const routeConversationId = url.match(/\/direct\/t\/([^/?#]+)/)?.[1];
       const activeConversationId = routeConversationId
@@ -568,6 +629,7 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
     this.updateSnapshot({ ...this.snapshot, state: "disconnected", detail });
   }
 }
+
 
 function normalizeComparableText(value: string): string {
   return value.replaceAll("\u00a0", " ").replace(/\s+/g, " ").trim();
