@@ -12,10 +12,17 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
     steps:
+      - name: Explain missing release token
+        if: env.RELEASE_PLEASE_TOKEN == ''
+        run: |
+          echo "::warning::RELEASE_PLEASE_TOKEN is not configured. The organization blocks GITHUB_TOKEN from creating release pull requests; see docs/RELEASING.md."
       - id: release
+        if: env.RELEASE_PLEASE_TOKEN != ''
         uses: googleapis/release-please-action@v5
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ env.RELEASE_PLEASE_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json

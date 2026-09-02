@@ -24,6 +24,15 @@ Releases are automated; maintainers should not edit versions or tags manually.
 
 The workflow uses OIDC and npm provenance, so a long-lived `NPM_TOKEN` is not stored in GitHub. If trusted publishing is unavailable, add an `NPM_TOKEN` secret and explicitly pass it as `NODE_AUTH_TOKEN`; do not commit tokens.
 
+## One-time GitHub release setup
+
+Release Please needs permission to create a release pull request. Choose one option:
+
+1. Enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests** at the organization/repository level; or
+2. Add a repository secret named `RELEASE_PLEASE_TOKEN` containing a fine-grained PAT or GitHub App token scoped only to this repository with **Contents: write** and **Pull requests: write**.
+
+The `stacking-money-forever` organization currently prevents the repository from enabling this permission locally, so option 2 is required unless an organization owner changes the organization policy. Until the secret exists, the release step is safely skipped with a warning. Never use or commit a classic token with unrelated organization access.
+
 ## Recovery
 
 - Failed verification: fix the source through a pull request; never move an existing tag.
