@@ -80,6 +80,7 @@ export function App({
   const [conversationFilter, setConversationFilter] = useState<ConversationFilter>("all");
   const [viewMode, setViewMode] = useState<ViewMode>("chat");
   const [input, setInput] = useState("");
+  const [inputEpoch, setInputEpoch] = useState(0);
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [messagesHidden, setMessagesHidden] = useState(false);
@@ -427,7 +428,10 @@ export function App({
       }
       if (key.tab) {
         const command = commandMatches[commandIndex];
-        if (command) setInput(`/${command.name} `);
+        if (command) {
+          setInput(`/${command.name} `);
+          setInputEpoch((epoch) => epoch + 1);
+        }
       }
       return;
     }
@@ -617,10 +621,7 @@ export function App({
       case "open": {
         const query = args.join(" ").trim().toLowerCase();
         if (!query) {
-          setConversationFilter("all");
-          setSelectedIndex(0);
-          setViewMode("conversations");
-          setNotice(copy.conversationsNotice);
+          setNotice(copy.openUsage);
           return;
         }
         const matches = snapshot.conversations.filter((conversation) =>
@@ -748,12 +749,22 @@ export function App({
   const submit = (value: string): void => {
     const parsed = parseSubmission(value);
     if (parsed.kind === "empty") return;
-    leaveCommandScreenImmediately();
-    setInput("");
-    setError(undefined);
 
     if (parsed.kind === "command") {
       const command = findSlashCommand(parsed.name) ?? commandMatches[commandIndex];
+      if (command?.name === "open" && parsed.args.length === 0) {
+        // /open requires a conversation name. Selecting it from the palette
+        // should continue argument entry instead of behaving like
+        // /conversations or clearing the composer with no visible result.
+        setInput("/open ");
+        setInputEpoch((epoch) => epoch + 1);
+        setError(undefined);
+        setNotice(copy.openUsage);
+        return;
+      }
+      leaveCommandScreenImmediately();
+      setInput("");
+      setError(undefined);
       if (!command) {
         setNotice(copy.unknownCommand(parsed.name));
         return;
@@ -761,6 +772,10 @@ export function App({
       void executeCommand(command, parsed.args).catch(showError);
       return;
     }
+
+    leaveCommandScreenImmediately();
+    setInput("");
+    setError(undefined);
 
     if (!snapshot.activeConversationId || workspaceCleared) {
       setNotice(copy.chooseConversationFirst);
@@ -1076,6 +1091,7 @@ export function App({
         <Text color={theme.prompt} bold>&gt; </Text>
         <Box flexGrow={1} flexShrink={1} minWidth={1}>
           <ImeTextInput
+            key={inputEpoch}
             value={input}
             onChange={handleInputChange}
             onSubmit={submit}

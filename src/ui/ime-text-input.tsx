@@ -72,8 +72,11 @@ export function ImeTextInput({
     ) {
       return;
     }
-    if (key.return) {
-      onSubmit?.(value);
+    const edit = applyInputChunk(value, safeOffset, input);
+    if (key.return || edit.submit) {
+      if (edit.value !== value) onChange(edit.value);
+      setCursorOffset(edit.cursorOffset);
+      onSubmit?.(edit.value);
       return;
     }
 
@@ -94,8 +97,8 @@ export function ImeTextInput({
     }
     if (!input) return;
 
-    onChange(value.slice(0, safeOffset) + input + value.slice(safeOffset));
-    setCursorOffset(safeOffset + input.length);
+    onChange(edit.value);
+    setCursorOffset(edit.cursorOffset);
   });
 
   return (
@@ -103,6 +106,20 @@ export function ImeTextInput({
       {value ? <Text>{value}</Text> : <Text dimColor>{placeholder}</Text>}
     </Box>
   );
+}
+
+export function applyInputChunk(
+  value: string,
+  cursorOffset: number,
+  input: string,
+): { value: string; cursorOffset: number; submit: boolean } {
+  const submitIndex = input.search(/[\r\n]/);
+  const inserted = submitIndex >= 0 ? input.slice(0, submitIndex) : input;
+  return {
+    value: value.slice(0, cursorOffset) + inserted + value.slice(cursorOffset),
+    cursorOffset: cursorOffset + inserted.length,
+    submit: submitIndex >= 0,
+  };
 }
 
 export function previousGraphemeOffset(value: string, offset: number): number {
