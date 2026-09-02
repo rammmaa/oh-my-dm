@@ -4,7 +4,20 @@
 
 ## English
 
-A local-first terminal chat client that looks and feels like a coding agent. Use Instagram and KakaoTalk from one TUI without running a backend server.
+**DM without looking like you're DMing.**
+
+oh-my-dm is a discreet TUI messenger styled to look like an Agent CLI. It brings Instagram and KakaoTalk into an interface inspired by tools such as Codex CLI, Claude Code, and OpenCode, making casual screen glances look more like coding-agent work than an open chat app.
+
+The main goal is simple: let you check and send DMs more privately in shared offices, classrooms, or other places where a familiar messenger window would immediately draw attention. Staying inside your terminal workflow is an additional benefit. There is no application backend or message archive; local connectors read from the original services and present everything through one agent-style workspace.
+
+### Why oh-my-dm?
+
+- **Doesn't immediately look like a messenger** — conversations are presented as an Agent CLI workspace instead of a familiar DM window
+- **Designed for discreet messaging** — check and send DMs with less visual attention from people around you
+- **Also fits your terminal workflow** — use an agent-style transcript, command palette, model label, workspace path, themes, and keyboard-first navigation
+- **One workspace for DMs** — browse Instagram and KakaoTalk conversations through a unified TUI
+- **Local-first and ephemeral** — no oh-my-dm server and no persisted message database
+- **Built for real terminal input** — responsive layouts, scrollback, history paging, and Korean IME support
 
 ### Features
 
@@ -20,6 +33,9 @@ A local-first terminal chat client that looks and feels like a coding agent. Use
 - Change the interface language at any time with `/language`
 
 oh-my-dm does not decode Instagram's internal WebSocket or MQTT payloads. Incoming frames are used only as wake-up signals to read the visible DOM again.
+
+> [!NOTE]
+> The interface is inspired by modern Agent CLI tools, but oh-my-dm is not affiliated with or endorsed by OpenAI, Anthropic, or OpenCode. It is a privacy-oriented interface, not a tool for bypassing workplace policies or device monitoring.
 
 ### Requirements and setup
 
@@ -89,7 +105,20 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. This proj
 
 ## 한국어
 
-코딩 에이전트처럼 생긴 로컬 우선 터미널 채팅 클라이언트입니다. 별도 백엔드 서버 없이 Instagram 웹과 macOS용 카카오톡을 하나의 TUI에서 다룹니다.
+**DM 하는 것처럼 보이지 않게 DM하세요.**
+
+oh-my-dm은 **Agent CLI처럼 보이도록 만든 눈치 덜 보이는 TUI 메신저**입니다. Instagram과 카카오톡을 Codex CLI, Claude Code, OpenCode 같은 인터페이스로 표시해, 주변 사람이 화면을 얼핏 봤을 때 일반적인 채팅 앱보다 코딩 에이전트 작업 화면처럼 보이게 합니다.
+
+핵심 목적은 회사, 교실 또는 사람이 함께 있는 공간에서 익숙한 메신저 창을 띄우지 않고 조금 더 몰래 DM을 확인하고 보내는 것입니다. 터미널 작업 흐름을 끊지 않는 것은 그다음 장점입니다. 별도 애플리케이션 백엔드나 메시지 저장소는 없으며, 로컬 connector가 원본 서비스의 데이터를 읽어 하나의 agent-style workspace에 표시합니다.
+
+### 왜 oh-my-dm인가요?
+
+- **메신저처럼 바로 보이지 않는 화면** — 익숙한 DM 창 대신 Agent CLI workspace 형태로 대화를 표시
+- **주변 눈치를 덜 보는 메시징** — 화면을 함께 보는 공간에서도 시선을 덜 끌며 DM 확인과 전송
+- **터미널 작업 흐름에도 잘 맞는 UI** — Agent CLI 스타일 transcript, command palette, 모델 표기, workspace 경로와 테마
+- **DM을 위한 하나의 workspace** — Instagram과 카카오톡 대화를 통합된 TUI에서 탐색
+- **로컬 우선·휘발성 구조** — oh-my-dm 서버와 메시지 데이터베이스 없이 동작
+- **실제 터미널 입력에 최적화** — 반응형 레이아웃, scrollback, history paging과 한글 IME 지원
 
 ### 주요 기능
 
@@ -101,6 +130,9 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. This proj
 - 로그인 세션만 전용 브라우저 프로필에 저장
 - 대화와 메시지를 저장하지 않고 connector의 원본 데이터를 기준으로 사용
 - 시스템 언어에 따라 한국어와 영어를 자동 선택하고 `/language`로 변경
+
+> [!NOTE]
+> 현대적인 Agent CLI의 인터페이스에서 영감을 받았지만 OpenAI, Anthropic 또는 OpenCode와 공식적으로 연관되거나 보증받은 프로젝트는 아닙니다. 주변 시선을 줄이기 위한 인터페이스이며 회사 정책이나 기기 모니터링을 우회하는 도구는 아닙니다.
 
 ### 요구 사항 및 실행
 
