@@ -10,6 +10,7 @@ export interface DisplayModel {
 }
 
 const FULL_EFFORTS: ModelEffort[] = ["low", "medium", "high", "xhigh", "max", "ultra"];
+const STANDARD_EFFORTS: ModelEffort[] = ["low", "medium", "high"];
 
 export const DISPLAY_MODELS: DisplayModel[] = [
   { id: "opus-5", label: "Opus 5", source: "Claude", aliases: ["opus"] },
@@ -37,6 +38,22 @@ export const DISPLAY_MODELS: DisplayModel[] = [
     source: "Codex",
     aliases: ["luna"],
     efforts: ["low", "medium", "high", "xhigh", "max"],
+    defaultEffort: "medium",
+  },
+  {
+    id: "glm-5.1",
+    label: "GLM-5.1",
+    source: "Z.AI",
+    aliases: ["glm", "zai", "z.ai"],
+    efforts: STANDARD_EFFORTS,
+    defaultEffort: "medium",
+  },
+  {
+    id: "kimi-k2.6",
+    label: "Kimi K2.6",
+    source: "Moonshot AI",
+    aliases: ["kimi", "moonshot", "k2.6"],
+    efforts: STANDARD_EFFORTS,
     defaultEffort: "medium",
   },
 ];
