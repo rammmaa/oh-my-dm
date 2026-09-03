@@ -218,13 +218,16 @@ export class KakaoNativeConnector extends EventEmitter implements ChatConnector 
         this.canLoadMoreConversations = nativeRows.length >= this.conversationLimit;
         this.rowById.clear();
         conversations = nativeRows.map((row) => {
-          const id = `room-${stableHash(row.title)}`;
+          const title = normalizeKakaoField(row.title) || "KakaoTalk";
+          const preview = normalizeKakaoField(row.preview);
+          const time = normalizeKakaoField(row.time);
+          const id = `room-${stableHash(title)}`;
           this.rowById.set(id, row.row);
           return {
             id,
             href: `kakaotalk:${row.row}`,
-            title: row.title,
-            preview: `${row.preview} · ${row.time}`,
+            title,
+            preview: [preview, time].filter(Boolean).join(" · "),
             unread: row.unread,
           };
         });
@@ -311,6 +314,14 @@ function stableHash(value: string): string {
     hash = Math.imul(hash, 16777619);
   }
   return (hash >>> 0).toString(16);
+}
+
+export function normalizeKakaoField(value: string): string {
+  return value
+    .replaceAll("\u00a0", " ")
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function errorMessage(error: unknown): string {
