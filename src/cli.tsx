@@ -22,14 +22,14 @@ const settings = await settingsStore.load();
 const cliLanguage = resolveLanguage(settings.language);
 const cliText = cliLanguage === "ko" ? {
   unsupportedProvider: (value: string) => `지원하지 않는 provider입니다: ${value}`,
-  login: "로그인용 Chrome을 엽니다. 로그인을 마친 뒤 Ctrl+C로 종료하세요.",
-  chatBrowser: "chat browser: Chromium Headless Shell (Dock 아이콘 없음)",
+  login: "로그인용 Playwright Chromium을 엽니다. 로그인을 마친 뒤 Ctrl+C로 종료하세요.",
+  chatBrowser: "chat browser: Playwright Chromium Headless (Dock 아이콘 없음)",
   logout: "Instagram 전용 브라우저 프로필을 삭제했습니다.",
   help: `사용법:\n  oh-my-dm                 TUI 실행\n  oh-my-dm login instagram 로그인 세션 생성\n  oh-my-dm doctor          로컬 설정 확인\n  oh-my-dm logout instagram 로그인 세션 삭제\n\n옵션:\n  --headed                   디버깅용 브라우저 창 표시`,
 } : {
   unsupportedProvider: (value: string) => `Unsupported provider: ${value}`,
-  login: "Opening Chrome for login. When you are finished, press Ctrl+C to exit.",
-  chatBrowser: "chat browser: Chromium Headless Shell (no Dock icon)",
+  login: "Opening Playwright Chromium for login. When finished, press Ctrl+C to exit.",
+  chatBrowser: "chat browser: Playwright Chromium Headless (no Dock icon)",
   logout: "Deleted the dedicated Instagram browser profile.",
   help: `Usage:\n  oh-my-dm                 Start the TUI\n  oh-my-dm login instagram Create a login session\n  oh-my-dm doctor          Check the local setup\n  oh-my-dm logout instagram Delete the login session\n\nOptions:\n  --headed                   Show the browser window for debugging`,
 };

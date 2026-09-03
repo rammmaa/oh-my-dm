@@ -22,6 +22,11 @@ import {
 } from "./instagram-dom.js";
 
 const INBOX_URL = "https://www.instagram.com/direct/inbox/";
+// Instagram localizes this element's accessible name (for example,
+// "Thread list" and "대화 리스트"). Its structural role is stable across
+// locales, so conversation discovery must not depend on the label text.
+const THREAD_LIST_SELECTOR = 'main [role="navigation"]';
+const THREAD_ROW_SELECTOR = `${THREAD_LIST_SELECTOR} [role="button"]`;
 
 export interface InstagramWebOptions {
   profileDir: string;
@@ -109,7 +114,11 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
     const page = this.requirePage();
     while (this.refreshRunning) await page.waitForTimeout(50);
     const previousCount = this.snapshot.conversations.length;
-    const moved = await page.locator('[aria-label="Thread list"]').evaluate((threadList): boolean => {
+    // Scrolling virtualizes the top rows and emits DOM wake events before this
+    // method's explicit refresh. Preserve the captured order from that first
+    // event onward, otherwise temporarily missing rows can be discarded.
+    this.preserveLoadedConversations = true;
+    const moved = await page.locator(THREAD_LIST_SELECTOR).evaluate((threadList): boolean => {
       const candidates = [threadList, ...threadList.querySelectorAll<HTMLElement>("div")]
         .filter((element): element is HTMLElement => element instanceof HTMLElement)
         .filter((element) => {
@@ -133,7 +142,6 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
     if (!moved) return 0;
 
     await page.waitForTimeout(450);
-    this.preserveLoadedConversations = true;
     await this.performRefresh();
     return Math.max(0, this.snapshot.conversations.length - previousCount);
   }
@@ -142,10 +150,10 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
     this.stopped = false;
     await fs.mkdir(this.options.profileDir, { recursive: true, mode: 0o700 });
     const headless = this.options.headless ?? true;
-    const browser = headless ? undefined : resolveBrowserExecutable();
-    this.browserLabel = headless ? "Chromium Headless Shell" : browser!.label;
+    const browser = resolveBrowserExecutable();
+    this.browserLabel = `${browser.label}${headless ? " Headless" : ""}`;
     this.context = await chromium.launchPersistentContext(this.options.profileDir, {
-      ...(browser ? { executablePath: browser.executablePath } : {}),
+      executablePath: browser.executablePath,
       headless,
       viewport: { width: 1100, height: 780 },
     });
@@ -185,8 +193,7 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
     if (conversation.href.startsWith("button:")) {
       const index = Number(conversation.href.slice("button:".length));
       try {
-        await page.locator('[aria-label="Thread list"] [role="button"]').evaluateAll((elements, target) => {
-          let threadRowsStarted = false;
+        await page.locator(THREAD_ROW_SELECTOR).evaluateAll((elements, target) => {
           const rows = elements.filter((element) => {
             const rect = element.getBoundingClientRect();
             const parts = [...new Set(
@@ -197,17 +204,37 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
             const text = parts.length >= 2
               ? parts.join("\n")
               : (element as HTMLElement).innerText.trim();
-            const startsThreadRows =
-              text.includes("·") ||
-              (rect.x < 500 && rect.width > 300 && rect.height >= 48 && rect.height <= 110);
-            if (startsThreadRows) threadRowsStarted = true;
-            return threadRowsStarted && text.length > 0;
+            return (
+              text.length > 0 &&
+              rect.x < 500 &&
+              rect.width > 300 &&
+              rect.height >= 48 &&
+              rect.height <= 110
+            );
           });
           const normalizedTitle = target.title.replaceAll("\u00a0", " ").trim();
           const previewLead = target.preview
             ?.replaceAll("\u00a0", " ")
             .split(" · ")[0]
             ?.trim();
+          const rowIdentity = (element: Element): string | undefined => {
+            const fiberKey = Object.keys(element).find((key) => key.startsWith("__reactFiber$"));
+            let fiber = fiberKey
+              ? (element as unknown as Record<string, {
+                  memoizedProps?: Record<string, unknown>;
+                  return?: unknown;
+                }>)[fiberKey]
+              : undefined;
+            for (let depth = 0; fiber && depth < 12; depth += 1) {
+              const props = fiber.memoizedProps;
+              const threadKey = props?.threadKeyForSelection ?? props?.threadFbidForSelection;
+              if (typeof threadKey === "string" || typeof threadKey === "number") {
+                return `thread:${threadKey}`;
+              }
+              fiber = fiber.return as typeof fiber;
+            }
+            return undefined;
+          };
           const titleMatches = rows.filter((element) => {
             const parts = [...new Set(
               [...element.querySelectorAll("span")]
@@ -216,14 +243,22 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
             )];
             return parts[0] === normalizedTitle;
           });
-          const matched = titleMatches.find((element) => {
+          const identityMatch = target.identity
+            ? titleMatches.find((element) => rowIdentity(element) === target.identity)
+            : undefined;
+          const matched = identityMatch ?? titleMatches.find((element) => {
             if (!previewLead) return true;
             const text = (element.textContent ?? "").replaceAll("\u00a0", " ");
             return text.includes(previewLead);
           }) ?? (titleMatches.length === 1 ? titleMatches[0] : rows[target.index]);
           if (!(matched instanceof HTMLElement)) throw new Error("대화 행을 찾지 못했습니다.");
           matched.click();
-        }, { index, title: conversation.title, preview: conversation.preview });
+        }, {
+          index,
+          title: conversation.title,
+          preview: conversation.preview,
+          identity: conversation.identity,
+        });
       } catch (error) {
         this.activeConversationOverride = previousOverride;
         throw error;
@@ -318,6 +353,9 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
     page.on("websocket", (socket) => {
       socket.on("framereceived", () => this.scheduleRefresh("websocket"));
     });
+    page.on("framenavigated", (frame) => {
+      if (frame === page.mainFrame()) this.scheduleRefresh("navigation", 120);
+    });
     page.on("close", () => this.setDisconnected("브라우저 탭이 닫혔습니다."));
 
     await page.addInitScript(observeInstagramChanges);
@@ -349,13 +387,17 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
     try {
       const page = this.requirePage();
       const url = page.url();
-      const loginRequired = /\/accounts\/login|\/challenge\//.test(url);
+      const sessionCookies = await this.context?.cookies("https://www.instagram.com") ?? [];
+      const hasSession = sessionCookies.some(
+        (cookie) => cookie.name === "sessionid" && cookie.value.length > 0,
+      );
+      const loginRequired = !hasSession || /\/accounts\/login|\/challenge\//.test(url);
 
       if (loginRequired) {
         this.updateSnapshot({
           ...this.snapshot,
           state: "login-required",
-          detail: "열린 Chrome에서 Instagram 로그인을 완료하세요.",
+          detail: "Playwright Chromium에서 Instagram 로그인을 완료하세요: oh-my-dm login instagram",
         });
         return;
       }
@@ -375,9 +417,8 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
           .filter((item): item is Conversation => item !== undefined),
       );
       const rawButtonConversations = await page
-          .locator('[aria-label="Thread list"] [role="button"]')
+          .locator(THREAD_ROW_SELECTOR)
           .evaluateAll((elements): RawConversation[] => {
-            let threadRowsStarted = false;
             const rows = elements.filter((element) => {
               const rect = element.getBoundingClientRect();
               const parts = [...new Set(
@@ -388,11 +429,13 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
               const text = parts.length >= 2
                 ? parts.join("\n")
                 : (element as HTMLElement).innerText.trim();
-              const startsThreadRows =
-                text.includes("·") ||
-                (rect.x < 500 && rect.width > 300 && rect.height >= 48 && rect.height <= 110);
-              if (startsThreadRows) threadRowsStarted = true;
-              return threadRowsStarted && text.length > 0;
+              return (
+                text.length > 0 &&
+                rect.x < 500 &&
+                rect.width > 300 &&
+                rect.height >= 48 &&
+                rect.height <= 110
+              );
             });
             return rows.map((element, index) => {
               const parts = [...new Set(
@@ -406,6 +449,27 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
                   ? parts.join("\n")
                   : (element as HTMLElement).innerText.trim(),
                 ariaLabel: element.getAttribute("aria-label"),
+                identity: (() => {
+                  const fiberKey = Object.keys(element).find((key) =>
+                    key.startsWith("__reactFiber$"),
+                  );
+                  let fiber = fiberKey
+                    ? (element as unknown as Record<string, {
+                        memoizedProps?: Record<string, unknown>;
+                        return?: unknown;
+                      }>)[fiberKey]
+                    : undefined;
+                  for (let depth = 0; fiber && depth < 12; depth += 1) {
+                    const props = fiber.memoizedProps;
+                    const threadKey =
+                      props?.threadKeyForSelection ?? props?.threadFbidForSelection;
+                    if (typeof threadKey === "string" || typeof threadKey === "number") {
+                      return `thread:${threadKey}`;
+                    }
+                    fiber = fiber.return as typeof fiber;
+                  }
+                  return undefined;
+                })(),
               };
             });
           });
@@ -413,6 +477,7 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
         rawButtonConversations
           .map(normalizeConversation)
           .filter((item): item is Conversation => item !== undefined),
+        this.snapshot.conversations,
       );
       // The current Instagram layout exposes complete rows as buttons while
       // anchors can be partial (notably omitting the active thread).
@@ -454,6 +519,13 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
       });
     } catch (error) {
       const normalized = error instanceof Error ? error : new Error(String(error));
+      if (isTransientInstagramNavigationError(normalized)) {
+        // Instagram replaces the document while switching routes. A DOM read
+        // caught in that small window is expected; retry against the new page
+        // instead of surfacing a connector failure in the TUI.
+        this.scheduleRefresh("navigation-retry", 250);
+        return;
+      }
       this.emit("error", normalized);
       this.updateSnapshot({ ...this.snapshot, state: "error", detail: normalized.message });
     } finally {
@@ -628,6 +700,16 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
   private setDisconnected(detail: string): void {
     this.updateSnapshot({ ...this.snapshot, state: "disconnected", detail });
   }
+}
+
+export function isTransientInstagramNavigationError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return [
+    "execution context was destroyed",
+    "most likely because of a navigation",
+    "cannot find context with specified id",
+    "frame was detached",
+  ].some((fragment) => message.toLowerCase().includes(fragment));
 }
 
 

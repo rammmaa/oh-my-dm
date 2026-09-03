@@ -50,6 +50,64 @@ test("버튼 기반 대화방은 위치가 바뀌어도 제목별 안정 ID를 �
   assert.equal(shifted[2]?.href, "button:2");
 });
 
+test("표시 이름이 같은 서로 다른 Instagram 계정을 프로필 식별자로 구분한다", () => {
+  const firstWindow = stabilizeButtonConversationIds([
+    normalizeConversation({
+      href: "button:3",
+      text: "김태현님\n첫 번째 대화",
+      identity: "/profile/first-account.jpg",
+    }),
+    normalizeConversation({
+      href: "button:4",
+      text: "김태현님\n두 번째 대화",
+      identity: "/profile/second-account.jpg",
+    }),
+  ].filter((item): item is NonNullable<typeof item> => item !== undefined));
+  const shiftedWindow = stabilizeButtonConversationIds([
+    normalizeConversation({
+      href: "button:0",
+      text: "김태현님\n두 번째 대화",
+      identity: "/profile/second-account.jpg",
+    }),
+  ].filter((item): item is NonNullable<typeof item> => item !== undefined), firstWindow);
+
+  assert.notEqual(firstWindow[0]?.id, firstWindow[1]?.id);
+  assert.equal(firstWindow[1]?.id, shiftedWindow[0]?.id);
+  assert.deepEqual(
+    mergeLoadedConversations(firstWindow, shiftedWindow).map((item) => item.id),
+    firstWindow.map((item) => item.id),
+  );
+});
+
+test("임시 식별자에서 실제 thread 식별자로 바뀌어도 같은 이름의 두 계정 ID를 승계한다", () => {
+  const initial = stabilizeButtonConversationIds([
+    { id: "button:0", href: "button:0", identity: "placeholder", title: "김태현님", preview: "첫 대화", unread: false },
+    { id: "button:1", href: "button:1", identity: "placeholder", title: "김태현님", preview: "둘째 대화", unread: false },
+  ]);
+  const loaded = stabilizeButtonConversationIds([
+    { id: "button:0", href: "button:0", identity: "thread:111", title: "김태현님", preview: "첫 대화", unread: false },
+    { id: "button:1", href: "button:1", identity: "thread:222", title: "김태현님", preview: "둘째 대화", unread: false },
+  ], initial);
+
+  assert.notEqual(initial[0]?.id, initial[1]?.id);
+  assert.deepEqual(loaded.map((item) => item.id), initial.map((item) => item.id));
+  assert.deepEqual(loaded.map((item) => item.identity), ["thread:111", "thread:222"]);
+});
+
+test("가상화된 새 행이 기존 방의 stale thread ID를 달아도 기존 방을 덮어쓰지 않는다", () => {
+  const existing = stabilizeButtonConversationIds([
+    { id: "button:0", href: "button:0", identity: "thread:bang", title: "방세준님", preview: "반응", unread: false },
+  ]);
+  const recycled = stabilizeButtonConversationIds([
+    { id: "button:1", href: "button:1", identity: "thread:bang", title: "s0meri님", preview: "걸어줘", unread: false },
+  ], existing);
+  const merged = mergeLoadedConversations(existing, recycled);
+
+  assert.notEqual(recycled[0]?.id, existing[0]?.id);
+  assert.deepEqual(merged.map((item) => item.title), ["방세준님", "s0meri님"]);
+  assert.deepEqual(merged.map((item) => item.preview), ["반응", "걸어줘"]);
+});
+
 test("커넥터 병합 중 사라진 Instagram 중간 가상화 행을 복원한다", () => {
   const row = (id: string, title: string) => ({ id, href: `button:${id}`, title, unread: false });
   const previous = [
@@ -64,6 +122,16 @@ test("커넥터 병합 중 사라진 Instagram 중간 가상화 행을 복원한
     restoreTransientConversationGaps(previous, current).map((item) => item.title),
     ["김태현 1", "김태현 2", "박가은", "방세준"],
   );
+});
+
+test("Instagram DOM이 기존 목록의 일부만 가상화해도 앞뒤 항목과 순서를 유지한다", () => {
+  const row = (id: string) => ({ id, href: `button:${id}`, title: id, unread: false });
+  const previous = [row("a"), row("b"), row("c"), row("d")];
+  const current = [{ ...previous[0]!, preview: "updated" }, previous[1]!];
+
+  const restored = restoreTransientConversationGaps(previous, current);
+  assert.deepEqual(restored.map((item) => item.id), ["a", "b", "c", "d"]);
+  assert.equal(restored[0]?.preview, "updated");
 });
 
 test("아래로 불러온 Instagram 대화방을 기존 목록 뒤에 유지한다", () => {

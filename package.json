@@ -36,7 +36,7 @@
     "clean": "node -e \"require('node:fs').rmSync('dist', {recursive:true, force:true})\"",
     "build": "npm run clean && tsc -p tsconfig.build.json",
     "dev": "node --import tsx src/cli.tsx",
-    "postinstall": "node scripts/patch-ink-static-fullscreen.mjs && playwright-core install chromium-headless-shell",
+    "postinstall": "node scripts/patch-ink-static-fullscreen.mjs && playwright-core install chromium --no-shell",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test test/**/*.test.ts"
   },

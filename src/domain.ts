@@ -8,6 +8,7 @@ export type ConnectionState =
 export interface Conversation {
   id: string;
   provider?: string;
+  identity?: string;
   title: string;
   href: string;
   preview?: string;

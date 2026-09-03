@@ -39,12 +39,18 @@ oh-my-dm does not decode Instagram's internal WebSocket or MQTT payloads. Incomi
 
 ### Requirements and setup
 
-Node.js 22 or later and Chrome, Chromium, Brave, or Edge are required. KakaoTalk additionally requires macOS with KakaoTalk installed and signed in.
+Node.js 22 or later is required. The Instagram connector installs and uses its own Playwright Chromium, so it works independently of whether your default browser is Safari, Chrome, Brave, or another browser. KakaoTalk additionally requires macOS with KakaoTalk installed and signed in.
 
 ```bash
 npm install --global oh-my-dm
 oh-my-dm login instagram
 oh-my-dm
+```
+
+If npm reports that the `oh-my-dm` install script was blocked, allow it and reinstall so the dedicated Chromium can be downloaded:
+
+```bash
+npm install --global --allow-scripts=oh-my-dm oh-my-dm
 ```
 
 `dm` is installed as a shorter alias, so you can launch the same TUI from any directory with either `dm` or `oh-my-dm`.
@@ -53,13 +59,13 @@ If typing `oh-my-dm` changes into a local directory with that name instead of la
 
 For KakaoTalk, grant Accessibility permission to the terminal running oh-my-dm under `System Settings → Privacy & Security → Accessibility`. The app reads only chat content loaded in KakaoTalk's accessibility UI. Conversations and messages are not written to the native bridge or disk.
 
-Instagram login is completed manually in the Chrome window that opens. The default data directory is `~/.oh-my-dm`. Set `OH_MY_DM_BROWSER` if no Chromium-based browser is detected, or use an isolated data directory while developing:
+Instagram login is completed manually in the dedicated Playwright Chromium window that opens. The same isolated profile is reused headlessly by the TUI; your default browser profile and cookies are never accessed. The default data directory is `~/.oh-my-dm`. Developers can override the Chromium executable with `OH_MY_DM_BROWSER`, or use an isolated data directory:
 
 ```bash
 OH_MY_DM_DATA="$PWD/.oh-my-dm" npm run dev
 ```
 
-The regular TUI uses Chromium Headless Shell. Use a visible browser only for debugging:
+The regular TUI runs the bundled Playwright Chromium headlessly. Use a visible browser only for debugging:
 
 ```bash
 oh-my-dm --headed
@@ -143,12 +149,18 @@ oh-my-dm은 Instagram 내부 WebSocket이나 MQTT payload를 해석하지 않습
 
 ### 요구 사항 및 설정
 
-Node.js 22 이상과 Chrome, Chromium, Brave 또는 Edge가 필요합니다. 카카오톡은 macOS용 앱이 설치되어 있고 로그인되어 있어야 합니다.
+Node.js 22 이상이 필요합니다. Instagram connector는 전용 Playwright Chromium을 설치해 사용하므로 기본 브라우저가 Safari, Chrome, Brave 또는 다른 브라우저여도 동일하게 작동합니다. 카카오톡은 macOS용 앱이 설치되어 있고 로그인되어 있어야 합니다.
 
 ```bash
 npm install --global oh-my-dm
 oh-my-dm login instagram
 oh-my-dm
+```
+
+npm이 `oh-my-dm` 설치 스크립트를 차단했다고 표시하면, 전용 Chromium을 내려받을 수 있도록 스크립트를 허용해 다시 설치하세요.
+
+```bash
+npm install --global --allow-scripts=oh-my-dm oh-my-dm
 ```
 
 짧은 별칭인 `dm`도 함께 설치되므로 어느 경로에서든 `dm` 또는 `oh-my-dm`으로 같은 TUI를 실행할 수 있습니다.
@@ -157,13 +169,13 @@ oh-my-dm
 
 카카오톡을 사용하려면 oh-my-dm을 실행한 터미널 앱을 `시스템 설정 → 개인정보 보호 및 보안 → 손쉬운 사용`에서 허용하세요. 앱은 카카오톡 손쉬운 사용 UI에 불러온 채팅 내용만 읽으며, native bridge나 디스크에 대화와 메시지를 기록하지 않습니다.
 
-Instagram 로그인은 열리는 Chrome 창에서 직접 완료합니다. 기본 데이터 디렉터리는 `~/.oh-my-dm`입니다. Chromium 계열 브라우저를 찾지 못하면 `OH_MY_DM_BROWSER`를 설정할 수 있고, 개발 중에는 별도의 데이터 디렉터리를 사용할 수 있습니다.
+Instagram 로그인은 열리는 전용 Playwright Chromium 창에서 직접 완료합니다. TUI는 같은 격리 프로필을 headless로 재사용하며 사용자의 기본 브라우저 프로필이나 쿠키에는 접근하지 않습니다. 기본 데이터 디렉터리는 `~/.oh-my-dm`입니다. 개발자는 `OH_MY_DM_BROWSER`로 Chromium 실행 파일을 변경하거나 별도의 데이터 디렉터리를 사용할 수 있습니다.
 
 ```bash
 OH_MY_DM_DATA="$PWD/.oh-my-dm" npm run dev
 ```
 
-일반 TUI는 Chromium Headless Shell을 사용합니다. 디버깅할 때만 브라우저 창을 표시하세요.
+일반 TUI는 번들된 Playwright Chromium을 headless로 사용합니다. 디버깅할 때만 브라우저 창을 표시하세요.
 
 ```bash
 oh-my-dm --headed

@@ -195,7 +195,10 @@ export function App({
     [conversationFilter, conversationProvider, snapshot.conversations],
   );
   const conversationWindow = useMemo(
-    () => getSelectionWindow(conversations, selectedIndex, Math.max(1, mainHeight - 2)),
+    // The fixed-height box spends two rows on its border and one on the
+    // provider/path header. Rendering one extra conversation makes Yoga
+    // collapse an arbitrary row to height 0, leaving it selectable but hidden.
+    () => getSelectionWindow(conversations, selectedIndex, Math.max(1, mainHeight - 3)),
     [conversations, mainHeight, selectedIndex],
   );
   const modelWindow = useMemo(
@@ -226,6 +229,9 @@ export function App({
     conversationContentWidth - 4 - conversationTitleWidth - 1,
   );
   const conversationPathLabel = `~/conversations · ${conversationFilter}`;
+  const conversationConnector = snapshot.connectors?.find(
+    (item) => item.id === conversationProvider,
+  );
 
   useEffect(() => {
     const onSnapshot = (next: ChatSnapshot) => {
@@ -989,7 +995,9 @@ export function App({
             </Box>
             {conversations.length === 0 ? (
               <Text color={theme.muted}>
-                {conversationFilter === "unread"
+                {conversationProvider === "instagram" && conversationConnector?.state === "login-required"
+                  ? copy.instagramLoginRequired
+                  : conversationFilter === "unread"
                   ? copy.noUnread
                   : copy.waitingConversations}
               </Text>

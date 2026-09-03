@@ -4,6 +4,7 @@ export interface RawConversation {
   href: string;
   text: string;
   ariaLabel?: string | null;
+  identity?: string;
 }
 
 export interface RawMessage {
@@ -21,6 +22,7 @@ export function threadIdFromHref(href: string): string | undefined {
 export function normalizeConversation(raw: RawConversation): Conversation | undefined {
   const id = threadIdFromHref(raw.href);
   if (!id) return undefined;
+  const identity = raw.identity?.trim() || undefined;
 
   const lines = uniqueLines(raw.text);
   const title = lines[0] ?? `thread-${id.slice(0, 8)}`;
@@ -29,20 +31,63 @@ export function normalizeConversation(raw: RawConversation): Conversation | unde
   return {
     id,
     href: raw.href,
+    ...(identity ? { identity } : {}),
     title,
     preview: lines.slice(1).join(" · ") || undefined,
     unread: /unread|읽지 않|새 메시지/.test(unreadText),
   };
 }
 
-export function stabilizeButtonConversationIds(items: Conversation[]): Conversation[] {
+export function stabilizeButtonConversationIds(
+  items: Conversation[],
+  previous: Conversation[] = [],
+): Conversation[] {
   const titleOccurrences = new Map<string, number>();
+  const identityOccurrences = new Map<string, number>();
+  const signatureOccurrences = new Map<string, number>();
+  for (const item of items) {
+    if (item.identity) {
+      identityOccurrences.set(item.identity, (identityOccurrences.get(item.identity) ?? 0) + 1);
+    }
+    const signature = conversationSignature(item);
+    signatureOccurrences.set(signature, (signatureOccurrences.get(signature) ?? 0) + 1);
+  }
+
   return items.map((item) => {
     if (!item.href.startsWith("button:")) return item;
+    const identityIsUniqueInCurrent = Boolean(
+      item.identity && identityOccurrences.get(item.identity) === 1,
+    );
+    const identityOwner = identityIsUniqueInCurrent
+      ? previous.find((candidate) => candidate.identity === item.identity)
+      : undefined;
+    // React virtualizes the list and can briefly reuse a row element while its
+    // old thread props are still attached. Never let that stale identity
+    // overwrite a different conversation.
+    const identityConflicts = Boolean(identityOwner && identityOwner.title !== item.title);
+    const identityIsSafe = identityIsUniqueInCurrent && !identityConflicts;
+    const previousByIdentity = identityIsSafe ? identityOwner : undefined;
+    const signature = conversationSignature(item);
+    const previousBySignature = signatureOccurrences.get(signature) === 1
+      ? uniqueMatch(previous, (candidate) => conversationSignature(candidate) === signature)
+      : undefined;
+    const matched = previousByIdentity ?? previousBySignature;
+    if (matched) {
+      return {
+        ...item,
+        id: matched.id,
+        ...(identityIsSafe ? {} : { identity: matched.identity }),
+      };
+    }
+    if (identityIsSafe && item.identity) {
+      return { ...item, id: `button-thread:${stableHash(item.identity)}` };
+    }
+
     const occurrence = titleOccurrences.get(item.title) ?? 0;
     titleOccurrences.set(item.title, occurrence + 1);
+    const { identity: _unstableIdentity, ...stableItem } = item;
     return {
-      ...item,
+      ...stableItem,
       id: `button-thread:${stableHash(`${item.title}\0${occurrence}`)}`,
     };
   });
@@ -53,6 +98,14 @@ export function restoreTransientConversationGaps(
   current: Conversation[],
 ): Conversation[] {
   if (previous.length === 0 || current.length === 0) return current;
+
+  const previousPositions = new Map(previous.map((item, index) => [item.id, index]));
+  const currentPositions = current.map((item) => previousPositions.get(item.id));
+  const isOrderedSubset = currentPositions.every(
+    (position, index) =>
+      position !== undefined && (index === 0 || position > currentPositions[index - 1]!),
+  );
+  if (isOrderedSubset) return mergeLoadedConversations(previous, current);
 
   const currentIds = new Set(current.map((item) => item.id));
   const restored = [...current];
@@ -73,12 +126,24 @@ export function restoreTransientConversationGaps(
   return restored;
 }
 
+function conversationSignature(item: Conversation): string {
+  return `${item.title}\0${item.preview ?? ""}`;
+}
+
+function uniqueMatch<T>(items: T[], predicate: (item: T) => boolean): T | undefined {
+  const matches = items.filter(predicate);
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
 export function mergeLoadedConversations(
   existing: Conversation[],
   incoming: Conversation[],
 ): Conversation[] {
   const incomingById = new Map(incoming.map((item) => [item.id, item]));
-  const merged = existing.map((item) => incomingById.get(item.id) ?? item);
+  const merged = existing.map((item) => {
+    const update = incomingById.get(item.id);
+    return update && update.title === item.title ? update : item;
+  });
   const existingIds = new Set(existing.map((item) => item.id));
   for (const item of incoming) {
     if (!existingIds.has(item.id)) merged.push(item);
