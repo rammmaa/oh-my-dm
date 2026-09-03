@@ -31,6 +31,10 @@ func stringAttribute(_ element: AXUIElement, _ name: CFString) -> String? {
   attribute(element, name) as? String
 }
 
+func boolAttribute(_ element: AXUIElement, _ name: CFString) -> Bool {
+  attribute(element, name) as? Bool ?? false
+}
+
 func role(of element: AXUIElement) -> String {
   stringAttribute(element, kAXRoleAttribute as CFString) ?? ""
 }
@@ -360,6 +364,56 @@ final class KakaoAccessibility {
     _ = try composer(windowTitle: windowTitle)
   }
 
+  private func waitUntilEnabled(_ button: AXUIElement, timeout: TimeInterval) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    repeat {
+      if boolAttribute(button, kAXEnabledAttribute as CFString) { return true }
+      usleep(20_000)
+    } while Date() < deadline
+    return false
+  }
+
+  private func notifyComposerOfInput(_ input: AXUIElement, text: String) throws {
+    // AXValue updates the visible NSTextView contents, but KakaoTalk does not
+    // always run its normal text-change handler. In that state the send button
+    // stays disabled and AXPress misleadingly returns success without sending.
+    // A targeted space/backspace pair makes KakaoTalk process a real keyboard
+    // edit while leaving the requested text unchanged and without touching the
+    // user's clipboard or bringing KakaoTalk to the foreground.
+    try setAttribute(input, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+    var selection = CFRange(location: text.utf16.count, length: 0)
+    guard let selectionValue = AXValueCreate(.cfRange, &selection) else {
+      throw BridgeError.message("KakaoTalk 입력 커서 위치를 만들지 못했습니다.")
+    }
+    try setAttribute(input, kAXSelectedTextRangeAttribute as CFString, selectionValue)
+
+    let processIdentifier = try runningApplication.processIdentifier
+    usleep(100_000)
+    var space: [UniChar] = [32]
+    for isKeyDown in [true, false] {
+      guard let event = CGEvent(
+        keyboardEventSource: nil,
+        virtualKey: 49,
+        keyDown: isKeyDown
+      ) else { throw BridgeError.message("KakaoTalk 입력 이벤트를 만들지 못했습니다.") }
+      event.keyboardSetUnicodeString(stringLength: space.count, unicodeString: &space)
+      event.postToPid(processIdentifier)
+    }
+    usleep(100_000)
+    for isKeyDown in [true, false] {
+      guard let event = CGEvent(
+        keyboardEventSource: nil,
+        virtualKey: 51,
+        keyDown: isKeyDown
+      ) else { throw BridgeError.message("KakaoTalk 입력 이벤트를 만들지 못했습니다.") }
+      event.postToPid(processIdentifier)
+    }
+    usleep(100_000)
+    guard stringAttribute(input, kAXValueAttribute as CFString) == text else {
+      throw BridgeError.message("KakaoTalk 입력 내용을 안전하게 준비하지 못했습니다.")
+    }
+  }
+
   func send(windowTitle: String, text: String) throws -> [String: Bool] {
     var controls = try composer(windowTitle: windowTitle)
     do {
@@ -369,17 +423,29 @@ final class KakaoAccessibility {
       controls = try composer(windowTitle: windowTitle)
       try setAttribute(controls.input, kAXValueAttribute as CFString, text as CFString)
     }
-    var result = AXUIElementPerformAction(controls.sendButton, kAXPressAction as CFString)
-    if result != .success {
+
+    if !waitUntilEnabled(controls.sendButton, timeout: 0.15) {
+      try notifyComposerOfInput(controls.input, text: text)
+    }
+    if !waitUntilEnabled(controls.sendButton, timeout: 0.6) {
+      // A cached AX element can outlive a recreated KakaoTalk chat window.
+      // Resolve the controls once more before deciding the button is unusable.
       composerCache.removeValue(forKey: windowTitle)
       controls = try composer(windowTitle: windowTitle)
-      try setAttribute(controls.input, kAXValueAttribute as CFString, text as CFString)
-      result = AXUIElementPerformAction(controls.sendButton, kAXPressAction as CFString)
     }
-    if result != .success { throw BridgeError.message("KakaoTalk 메시지를 전송하지 못했습니다.") }
+    guard stringAttribute(controls.input, kAXValueAttribute as CFString) == text else {
+      throw BridgeError.message("KakaoTalk 입력창 내용이 전송할 메시지와 일치하지 않습니다.")
+    }
+    guard waitUntilEnabled(controls.sendButton, timeout: 0.25) else {
+      throw BridgeError.message("KakaoTalk 전송 버튼이 활성화되지 않았습니다.")
+    }
+
+    let pressResult = AXUIElementPerformAction(controls.sendButton, kAXPressAction as CFString)
 
     // KakaoTalk clears the composer only after accepting the send action. This
-    // is a much cheaper confirmation than rescanning the message table.
+    // is the authoritative confirmation. AXPress can report cannotComplete
+    // even when KakaoTalk accepted the click and sent the message, so never
+    // reject solely from the Accessibility return code.
     // KakaoTalk occasionally keeps the text in the composer for several
     // seconds while its network connection catches up. The send button has
     // already been pressed exactly once, so only wait here; never press it
@@ -390,6 +456,11 @@ final class KakaoAccessibility {
       if remaining.isEmpty { return ["confirmed": true] }
       usleep(50_000)
     } while Date() < confirmationDeadline
+    if pressResult != .success {
+      throw BridgeError.message(
+        "KakaoTalk 전송 동작을 완료하지 못했습니다. (Accessibility \(pressResult.rawValue))"
+      )
+    }
     throw BridgeError.message("KakaoTalk에서 8초 안에 메시지 전송을 확인하지 못했습니다.")
   }
 
