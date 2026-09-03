@@ -5,6 +5,16 @@ export interface MessageWindow<T> {
   maxOffset: number;
 }
 
+export function getOlderMessageOffset(
+  currentOffset: number,
+  maxOffset: number,
+  visibleItemCount: number,
+  byPage: boolean,
+): number {
+  const step = byPage ? Math.max(1, visibleItemCount) : 1;
+  return Math.min(maxOffset, currentOffset + step);
+}
+
 export function getMessageWindow<T>(
   items: T[],
   visibleRows: number,

@@ -5,7 +5,7 @@ import wrapAnsi from "wrap-ansi";
 
 import type { ChatConnector, ChatSnapshot, Conversation } from "../domain.js";
 import { APP_VERSION } from "../version.js";
-import { getMessageWindow } from "./message-window.js";
+import { getMessageWindow, getOlderMessageOffset } from "./message-window.js";
 import {
   filterSlashCommands,
   findSlashCommand,
@@ -567,16 +567,22 @@ export function App({
         return;
       }
       enterHistoryScreen();
-      setMessageOffset(key.pageUp ? messageWindow.maxOffset : 0);
+      const nextOffset = key.pageUp
+        ? getOlderMessageOffset(0, messageWindow.maxOffset, messageWindow.items.length, true)
+        : 0;
+      setMessageOffset(nextOffset);
       setNotice(copy.historyNotice);
-      if (key.pageUp) loadOlderMessages();
+      if (key.pageUp && nextOffset === messageWindow.maxOffset) loadOlderMessages();
       return;
     }
     if (viewMode === "history" && (key.upArrow || key.pageUp)) {
       if (messageOffset < messageWindow.maxOffset) {
-        const nextOffset = key.pageUp
-          ? messageWindow.maxOffset
-          : Math.min(messageWindow.maxOffset, messageOffset + 1);
+        const nextOffset = getOlderMessageOffset(
+          messageOffset,
+          messageWindow.maxOffset,
+          messageWindow.items.length,
+          key.pageUp,
+        );
         setMessageOffset(nextOffset);
         if (nextOffset === messageWindow.maxOffset) loadOlderMessages();
       } else {
