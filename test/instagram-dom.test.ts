@@ -8,6 +8,7 @@ import {
   mergeMessageWindows,
   normalizeMessage,
   normalizeSenderLabel,
+  repairReplyQuoteSenders,
   restoreTransientConversationGaps,
   stabilizeButtonConversationIds,
   threadIdFromHref,
@@ -165,6 +166,36 @@ test("DOM에서 찾은 실제 발신자 이름을 우선한다", () => {
     0,
   );
   assert.equal(message?.sender, "이정민");
+  assert.equal(message?.kind, "text");
+});
+
+test("메시지 타입과 답장 메타데이터를 정규화한다", () => {
+  const image = normalizeMessage(
+    "group-1",
+    { text: "사진을 보냈습니다.", sender: "이정민" },
+    0,
+  );
+  const reply = normalizeMessage(
+    "group-1",
+    { text: "괜찮은데?", sender: "이정민 replied to 故추whw만함" },
+    1,
+  );
+
+  assert.equal(image?.kind, "image");
+  assert.equal(reply?.kind, "reply");
+  assert.deepEqual(reply?.replyTo, { sender: "故추whw만함" });
+  assert.equal(reply?.sender, "이정민");
+});
+
+test("내용이 같아도 타입이 다른 메시지는 병합 중 사라지지 않는다", () => {
+  const base = { threadId: "group-1", sender: "A", text: "공유됨" };
+  const existing = [{ ...base, id: "text", kind: "text" as const }];
+  const incoming = [{ ...base, id: "post", kind: "post" as const }];
+
+  assert.deepEqual(
+    mergeMessageWindows(existing, incoming, "newer").map((message) => message.kind),
+    ["text", "post"],
+  );
 });
 
 test("Instagram 프로필과 메시지 라벨에서 발신자 이름만 추출한다", () => {
@@ -191,6 +222,7 @@ test("위로 불러온 메시지를 기존 대화 앞에 겹침 없이 합친다
   const message = (id: string, sender = "A") => ({
     id,
     threadId: "group-1",
+    kind: "text" as const,
     sender,
     text: id,
   });
@@ -202,8 +234,123 @@ test("위로 불러온 메시지를 기존 대화 앞에 겹침 없이 합친다
   );
 });
 
+test("Instagram DOM이 최근 anchor 뒤에 과거 행을 붙여도 과거 데이터는 앞에 병합한다", () => {
+  const message = (text: string) => ({
+    id: text,
+    threadId: "group-1",
+    kind: "text" as const,
+    sender: "A",
+    text,
+  });
+  const existing = [message("최근 1"), message("최근 2"), message("최신")];
+  const mixedDomWindow = [
+    message("최근 2"),
+    message("최신"),
+    message("과거 1"),
+    message("과거 2"),
+  ];
+
+  assert.deepEqual(
+    mergeMessageWindows(existing, mixedDomWindow, "older").map((item) => item.text),
+    ["과거 1", "과거 2", "최근 1", "최근 2", "최신"],
+  );
+});
+
+test("전체 최근 창 뒤에 과거 행이 붙은 DOM도 anchor 아래 순서를 오염시키지 않는다", () => {
+  const message = (text: string) => ({
+    id: text,
+    threadId: "group-1",
+    kind: "text" as const,
+    sender: "A",
+    text,
+  });
+  const existing = [message("최근 1"), message("최근 2"), message("최신")];
+  const mixedDomWindow = [...existing, message("과거 1"), message("과거 2")];
+
+  assert.deepEqual(
+    mergeMessageWindows(existing, mixedDomWindow, "older").map((item) => item.text),
+    ["과거 1", "과거 2", "최근 1", "최근 2", "최신"],
+  );
+});
+
+test("여러 번의 sparse 과거 DOM 병합에서도 기존 history 순서를 고정한다", () => {
+  const message = (text: string) => ({
+    id: text,
+    threadId: "group-1",
+    kind: "text" as const,
+    sender: "A",
+    text,
+  });
+  const recent = ["릴스", "퐁당퐁당", "탐구", "개추", "잘하네", "24322", "캬"]
+    .map(message);
+  const firstLoad = mergeMessageWindows(
+    recent,
+    [message("24322"), message("캬"), message("서울남자"), message("ㅋㅋㅋ")],
+    "older",
+  );
+  const secondLoad = mergeMessageWindows(
+    firstLoad,
+    [message("탐구"), message("잘하네"), message("더 오래된 메시지")],
+    "older",
+  );
+
+  assert.deepEqual(secondLoad.map((item) => item.text), [
+    "더 오래된 메시지",
+    "서울남자",
+    "ㅋㅋㅋ",
+    "릴스",
+    "퐁당퐁당",
+    "탐구",
+    "개추",
+    "잘하네",
+    "24322",
+    "캬",
+  ]);
+});
+
+test("본문이 실제로 두 번 전송된 경우 occurrence 수를 보존한다", () => {
+  const message = (id: string) => ({
+    id,
+    threadId: "group-1",
+    kind: "text" as const,
+    sender: "A",
+    text: "아니지",
+  });
+
+  const merged = mergeMessageWindows([message("new")], [message("old"), message("new")], "older");
+  assert.equal(merged.length, 2);
+  assert.deepEqual(merged.map((item) => item.text), ["아니지", "아니지"]);
+});
+
+test("답장 메타데이터가 조회마다 달라도 같은 anchor로 병합하고 정보를 보강한다", () => {
+  const plain = {
+    id: "plain",
+    threadId: "group-1",
+    kind: "text" as const,
+    sender: "polalmkhksohn_",
+    text: "집갔는데 문잠겨있다 이제",
+  };
+  const reply = {
+    ...plain,
+    id: "reply",
+    kind: "reply" as const,
+    replyTo: { sender: "임규현" },
+  };
+
+  const merged = mergeMessageWindows([plain], [reply], "older");
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0]?.kind, "reply");
+  assert.deepEqual(merged[0]?.replyTo, { sender: "임규현" });
+});
+
 test("현재 창과 같은 메시지는 기록에 중복 추가하지 않는다", () => {
-  const message = (id: string) => ({ id, threadId: "group-1", sender: "A", text: id });
+  const message = (id: string) => ({
+    id,
+    threadId: "group-1",
+    kind: "text" as const,
+    sender: "A",
+    text: id,
+  });
   const existing = [message("1"), message("2"), message("3")];
   assert.deepEqual(
     mergeMessageWindows(existing, existing.slice(1), "newer").map((item) => item.text),
@@ -212,7 +359,7 @@ test("현재 창과 같은 메시지는 기록에 중복 추가하지 않는다"
 });
 
 test("같은 사람이 연속해서 보낸 메시지의 unknown을 직전 이름으로 채운다", () => {
-  const base = { threadId: "group-1" };
+  const base = { threadId: "group-1", kind: "text" as const };
   const messages = inheritGroupedSenders([
     { ...base, id: "1", sender: "임규현", text: "지금 플렉스 ㄱㄱ" },
     { ...base, id: "2", sender: "unknown", text: "바로뽑아줌 서류" },
@@ -220,8 +367,8 @@ test("같은 사람이 연속해서 보낸 메시지의 unknown을 직전 이름
   assert.equal(messages[1]?.sender, "임규현");
 });
 
-test("Instagram이 묶음 마지막에만 프로필을 붙여도 앞 메시지의 이름을 채운다", () => {
-  const base = { threadId: "thread-1", timestamp: undefined };
+test("과거 창이 묶음 중간에서 시작하면 다음 사람 이름을 거꾸로 붙이지 않는다", () => {
+  const base = { threadId: "thread-1", kind: "text" as const, timestamp: undefined };
   const messages = inheritGroupedSenders([
     { ...base, id: "1", sender: "나", text: "축구 안 할 거임?" },
     { ...base, id: "2", sender: "unknown", text: "축구화 안 들고 왔음" },
@@ -231,16 +378,131 @@ test("Instagram이 묶음 마지막에만 프로필을 붙여도 앞 메시지�
 
   assert.deepEqual(messages.map((message) => message.sender), [
     "나",
-    "x0gu.s_board",
-    "x0gu.s_board",
+    "unknown",
+    "unknown",
     "x0gu.s_board",
   ]);
 });
 
-test("새 DOM에서 찾은 이름으로 메모리의 unknown 메시지를 갱신한다", () => {
-  const unknown = { id: "old", threadId: "group-1", sender: "unknown", text: "바로뽑아줌" };
+test("history 병합은 같은 본문만 보고 기존 발신자를 바꾸지 않는다", () => {
+  const unknown = {
+    id: "old",
+    threadId: "group-1",
+    kind: "text" as const,
+    sender: "unknown",
+    text: "바로뽑아줌",
+  };
   const resolved = { ...unknown, id: "new", sender: "임규현" };
   const merged = mergeMessageWindows([unknown], [resolved], "newer");
   assert.equal(merged.length, 1);
-  assert.equal(merged[0]?.sender, "임규현");
+  assert.equal(merged[0]?.sender, "unknown");
+});
+
+test("동일 본문의 다른 발신자가 나타나도 추정 발신자를 덮어쓰지 않는다", () => {
+  const inferred = {
+    id: "old",
+    threadId: "group-1",
+    kind: "text" as const,
+    sender: "polalmkhksohn_",
+    senderInferred: true,
+    text: "집갔는데 문잠겨있다 이제",
+  };
+  const resolved = {
+    ...inferred,
+    id: "new",
+    sender: "hyeon_0627",
+    senderInferred: undefined,
+  };
+
+  const merged = mergeMessageWindows([inferred], [resolved], "newer");
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0]?.sender, "polalmkhksohn_");
+  assert.equal(merged[0]?.senderInferred, true);
+});
+
+test("같은 본문의 앞 메시지와 뒤 답장은 각각의 발신자를 유지한다", () => {
+  const base = { threadId: "group-1", text: "34343" };
+  const existing = [
+    {
+      ...base,
+      id: "original",
+      kind: "text" as const,
+      sender: "故추whw만함",
+      senderInferred: true,
+    },
+    {
+      ...base,
+      id: "reply",
+      kind: "reply" as const,
+      sender: "이정민",
+      replyTo: { sender: "故추whw만함" },
+    },
+  ];
+  const incoming = [existing[1]!];
+
+  const merged = mergeMessageWindows(existing, incoming, "older");
+  assert.deepEqual(merged.map((message) => message.sender), ["故추whw만함", "이정민"]);
+});
+
+test("내 메시지 경계를 넘어 다음 발신자 이름을 이전 그룹에 붙이지 않는다", () => {
+  const base = { threadId: "group-1", kind: "text" as const };
+  const messages = inheritGroupedSenders([
+    { ...base, id: "1", sender: "故추whw만함", text: "ㅈ박은줄 알았는데" },
+    { ...base, id: "2", sender: "unknown", text: "최악정도는 아니네요" },
+    { ...base, id: "3", sender: "unknown", text: "34343" },
+    { ...base, id: "4", sender: "나", text: "괜찮은데?" },
+    { ...base, id: "5", sender: "이정민", text: "34343" },
+  ]);
+
+  assert.deepEqual(messages.map((message) => message.sender), [
+    "故추whw만함",
+    "故추whw만함",
+    "故추whw만함",
+    "나",
+    "이정민",
+  ]);
+});
+
+test("내 메시지 위의 답장 인용 원문은 답장 대상의 발신자로 복원한다", () => {
+  const base = { threadId: "group-1" };
+  const repaired = repairReplyQuoteSenders([
+    { ...base, id: "1", kind: "text", sender: "故추whw만함", text: "최악정도는 아니네요" },
+    { ...base, id: "2", kind: "reply", sender: "이정민", text: "34343", replyTo: { sender: "故추whw만함" } },
+    { ...base, id: "3", kind: "text", sender: "나", text: "괜찮은데?" },
+    { ...base, id: "4", kind: "reply", sender: "이정민", text: "34343", replyTo: { sender: "故추whw만함" } },
+    { ...base, id: "5", kind: "reply", sender: "이정민", text: "퐁당퐁당 뭔데", replyTo: { sender: "故추whw만함" } },
+  ]);
+
+  assert.deepEqual(repaired.map(({ sender, kind }) => ({ sender, kind })), [
+    { sender: "故추whw만함", kind: "text" },
+    { sender: "故추whw만함", kind: "text" },
+    { sender: "나", kind: "text" },
+    { sender: "이정민", kind: "reply" },
+    { sender: "이정민", kind: "reply" },
+  ]);
+});
+
+test("history에 잘못 저장된 답장 발신자도 다음 병합에서 원문 발신자로 교정한다", () => {
+  const base = { threadId: "group-1" };
+  const polluted = [
+    { ...base, id: "1", kind: "text" as const, sender: "故추whw만함", text: "최악정도는 아니네요" },
+    { ...base, id: "2", kind: "reply" as const, sender: "이정민", text: "34343", replyTo: { sender: "故추whw만함" } },
+    { ...base, id: "3", kind: "text" as const, sender: "나", text: "괜찮은데?" },
+    { ...base, id: "4", kind: "reply" as const, sender: "이정민", text: "34343", replyTo: { sender: "故추whw만함" } },
+    { ...base, id: "5", kind: "reply" as const, sender: "이정민", text: "퐁당퐁당 뭔데", replyTo: { sender: "故추whw만함" } },
+  ];
+  const currentWindow = [
+    { ...base, id: "fresh-1", kind: "text" as const, sender: "故추whw만함", text: "최악정도는 아니네요" },
+    { ...base, id: "fresh-2", kind: "text" as const, sender: "故추whw만함", senderInferred: true, text: "34343" },
+    { ...base, id: "fresh-3", kind: "text" as const, sender: "나", text: "괜찮은데?" },
+  ];
+
+  const repaired = mergeMessageWindows(polluted, currentWindow, "newer");
+  assert.deepEqual(repaired.map(({ sender, text }) => ({ sender, text })), [
+    { sender: "故추whw만함", text: "최악정도는 아니네요" },
+    { sender: "故추whw만함", text: "34343" },
+    { sender: "나", text: "괜찮은데?" },
+    { sender: "이정민", text: "34343" },
+    { sender: "이정민", text: "퐁당퐁당 뭔데" },
+  ]);
 });

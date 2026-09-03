@@ -14,7 +14,10 @@ import {
   normalizeConversation,
   mergeLoadedConversations,
   mergeMessageWindows,
+  messageWindowsShareAnchor,
   normalizeMessage,
+  normalizeSenderLabel,
+  repairReplyQuoteSenders,
   restoreTransientConversationGaps,
   stabilizeButtonConversationIds,
   type RawConversation,
@@ -105,10 +108,41 @@ export function clickInstagramConversationRow(
 }
 
 export function readInstagramMessageRows(elements: Element[]): RawMessage[] {
-  return elements
+  const messageElements = elements.filter(
+    (element) => !elements.some(
+      (candidate) => candidate !== element && candidate.contains(element),
+    ),
+  );
+  return messageElements
     .map((element) => {
       const node = element as HTMLElement;
       const text = node.innerText ?? "";
+      const semanticLabels = [
+        node.getAttribute("aria-label"),
+        node.getAttribute("title"),
+        ...[...node.querySelectorAll<HTMLElement>("[aria-label], [title], img[alt]")].flatMap(
+          (candidate) => [
+            candidate.getAttribute("aria-label"),
+            candidate.getAttribute("title"),
+            candidate.getAttribute("alt"),
+          ],
+        ),
+      ]
+        .map((label) => label?.replaceAll("\u00a0", " ").trim())
+        .filter((label): label is string => Boolean(label));
+      const detectedMediaKind = semanticLabels.some((label) =>
+        /^(?:사진|이미지|photo|image|sent (?:a |an )?(?:photo|image))\.?$/i.test(label),
+      )
+        ? "image" as const
+        : semanticLabels.some((label) =>
+            /^(?:동영상|비디오|video|sent (?:a )?video)\.?$/i.test(label),
+          )
+          ? "video" as const
+          : semanticLabels.some((label) =>
+              /^(?:이모티콘|스티커|sticker|sent (?:a )?(?:sticker|emoji))\.?$/i.test(label),
+            )
+            ? "sticker" as const
+            : undefined;
       const containers: HTMLElement[] = [];
       let container: HTMLElement | null = node;
       for (let depth = 0; depth < 10 && container; depth += 1) {
@@ -199,6 +233,9 @@ export function readInstagramMessageRows(elements: Element[]): RawMessage[] {
             /(?:carousel_share_child_media_id|is_ineligible_for_clips_chaining=false)/i.test(sharedTargetUrl)
         )),
       );
+      const isPost = Boolean(
+        inlineShare && !isReel && /instagram\.com\/p\//i.test(sharedTargetUrl),
+      );
       const reelTitle = isReel && reelLink
         ? [
             reelLink.getAttribute("aria-label"),
@@ -217,31 +254,128 @@ export function readInstagramMessageRows(elements: Element[]): RawMessage[] {
         ? reelTitle
           ? `${reelTitle.replace(/\s*\(릴스\)$/, "")}(릴스)`
           : "(릴스)"
+        : isPost
+          ? "(게시물)"
+          : detectedMediaKind === "image"
+            ? "사진을 보냈습니다."
+            : detectedMediaKind === "video"
+              ? "동영상을 보냈습니다."
+              : detectedMediaKind === "sticker"
+                ? "이모티콘을 보냈습니다."
         : text;
       const ownLabel = element.getAttribute("aria-label");
       let sender: string | null = null;
       let senderSource: "display" | "profile" | undefined;
+      let senderIdentity: string | null = null;
+
+      // Reply rows often render the quoted message owner's display name in
+      // the card while the row aria-label identifies the actual sender. The
+      // aria-label must win here or replies are attributed to their target.
+      if (
+        ownLabel &&
+        (/^.+? replied to .+$/i.test(ownLabel) ||
+          /^.+?님이 (?:회원님|.+?님)에게 (?:보낸 답장|답장했습니다)$/.test(ownLabel))
+      ) {
+        sender = ownLabel;
+        senderSource = "display";
+      }
 
       // Instagram can expose the account ID in an avatar label while showing
       // the user's chosen display name above the same message group. Search
       // every visible ancestor first so one person is not rendered under two
       // names within a consecutive group.
-      for (const candidateContainer of containers) {
+      for (const candidateContainer of sender ? [] : containers) {
+        const nestedMessageRows = candidateContainer.querySelectorAll(
+          '[role="row"], [role="listitem"]',
+        ).length;
+        if (candidateContainer !== node && nestedMessageRows > 1) continue;
         const lines = [...new Set(
           candidateContainer.innerText
             .split("\n")
             .map((line) => line.trim())
             .filter(Boolean),
         )];
-        if (lines.length >= 2 && lines[0] !== text.trim() && lines[0]!.length <= 80) {
+        if (
+          lines.length >= (detectedMediaKind ? 1 : 2) &&
+          lines[0] !== text.trim() &&
+          lines[0]!.length <= 80
+        ) {
           sender = lines[0]!;
           senderSource = "display";
           break;
         }
       }
 
+      // Keep the stable profile/account label even when a human-friendly
+      // display name was found. The connector uses this pair to canonicalize
+      // later rows that expose only the account ID.
+      if (!ownLabel || !(/replied to/i.test(ownLabel) || /답장/.test(ownLabel))) {
+        let fallbackIdentity: string | null = null;
+        for (const candidateContainer of containers) {
+          // The avatar label and its profile link are not always the same DOM
+          // node (or even direct ancestors). Prefer the stable /username/
+          // route anywhere in the smallest message-group container. Do not
+          // use broad links for inline shares: those belong to the shared
+          // reel/post author, not necessarily the DM sender.
+          if (!inlineShare) {
+            const profileIds = [
+              ...(candidateContainer.matches("a[href]") ? [candidateContainer] : []),
+              ...candidateContainer.querySelectorAll<HTMLElement>("a[href]"),
+            ].map((candidate) => candidate.getAttribute("href"))
+              .map((href) => href?.match(/^\/([^/?#]+)\/?(?:\?.*)?$/)?.[1])
+              .filter((profileId): profileId is string => Boolean(
+                profileId &&
+                !/^(?:direct|reel|reels|p|stories|explore|accounts)$/i.test(profileId),
+              ));
+            const uniqueProfileIds = [...new Set(profileIds)];
+            if (uniqueProfileIds.length === 1) {
+              senderIdentity = uniqueProfileIds[0]!;
+              break;
+            }
+          }
+
+          const profileElements = [
+            ...candidateContainer.querySelectorAll<HTMLElement>('img[alt], [aria-label], [title]'),
+          ].filter((candidate) => {
+            const label = [
+              candidate.getAttribute("alt"),
+              candidate.getAttribute("aria-label"),
+              candidate.getAttribute("title"),
+            ].filter(Boolean).join(" ");
+            return label.length <= 360 &&
+              /프로필 사진|profile picture|프로필 페이지|open the profile page of/i.test(label);
+          });
+          const identities = profileElements.flatMap((candidate) => {
+            const href = candidate.closest<HTMLAnchorElement>('a[href]')?.getAttribute("href");
+            const profileId = href?.match(/^\/([^/?#]+)\/?(?:\?.*)?$/)?.[1];
+            if (profileId && !/^(?:direct|reel|reels|p|stories|explore|accounts)$/i.test(profileId)) {
+              return [profileId];
+            }
+            return [
+              candidate.getAttribute("alt"),
+              candidate.getAttribute("aria-label"),
+              candidate.getAttribute("title"),
+            ].filter((label): label is string => Boolean(label));
+          });
+          const uniqueIdentities = [...new Set(identities)];
+          if (!fallbackIdentity && uniqueIdentities.length === 1) {
+            fallbackIdentity = uniqueIdentities[0]!;
+          }
+        }
+        senderIdentity ??= fallbackIdentity;
+      }
+
+      if (!sender && senderIdentity) {
+        sender = senderIdentity;
+        senderSource = "profile";
+      }
+
       if (!sender) {
         for (const candidateContainer of containers) {
+          const nestedMessageRows = candidateContainer.querySelectorAll(
+            '[role="row"], [role="listitem"]',
+          ).length;
+          if (candidateContainer !== node && nestedMessageRows > 1) continue;
           const labels = [
             ...candidateContainer.querySelectorAll<HTMLElement>('img[alt], [aria-label], [title]'),
           ].flatMap((candidate) => [
@@ -270,7 +404,10 @@ export function readInstagramMessageRows(elements: Element[]): RawMessage[] {
         ariaLabel: ownLabel,
         timestamp: element.querySelector("time")?.getAttribute("datetime"),
         ...(isReel ? { kind: "reel" as const } : {}),
+        ...(isPost ? { kind: "post" as const } : {}),
+        ...(!isReel && !isPost && detectedMediaKind ? { kind: detectedMediaKind } : {}),
         ...(senderSource ? { senderSource } : {}),
+        ...(senderIdentity ? { senderIdentity } : {}),
       };
     })
     .filter((item) => item.text.trim().length > 0);
@@ -279,6 +416,77 @@ export function readInstagramMessageRows(elements: Element[]): RawMessage[] {
 export interface InstagramWebOptions {
   profileDir: string;
   headless?: boolean;
+}
+
+export function canonicalizeInstagramSenders(
+  rawMessages: RawMessage[],
+  aliases: Map<string, string>,
+): RawMessage[] {
+  // Instagram's current group-chat DOM puts the visible display name above
+  // the first bubble in a sender run, but puts the avatar/profile link beside
+  // the last bubble. They are therefore often exposed on adjacent RawMessage
+  // objects rather than on the same object.
+  let currentDisplayName: string | undefined;
+  for (const raw of rawMessages) {
+    const sender = normalizeSenderLabel(raw.sender);
+    const isReply = Boolean(
+      raw.ariaLabel && (/replied to/i.test(raw.ariaLabel) || /답장/.test(raw.ariaLabel)),
+    );
+    if (sender === "나") {
+      currentDisplayName = undefined;
+      continue;
+    }
+    if (raw.senderSource === "display" && sender && !isReply) {
+      currentDisplayName = sender;
+    }
+
+    const identity = normalizeSenderLabel(raw.senderIdentity) ??
+      (raw.senderSource === "profile" ? sender : undefined);
+    if (
+      currentDisplayName &&
+      identity &&
+      currentDisplayName !== identity &&
+      currentDisplayName !== "나"
+    ) {
+      aliases.set(identity, currentDisplayName);
+    }
+  }
+
+  return rawMessages.map((raw) => {
+    const identity = normalizeSenderLabel(raw.sender);
+    const stableIdentity = normalizeSenderLabel(raw.senderIdentity);
+    const displayName = stableIdentity
+      ? aliases.get(stableIdentity)
+      : identity
+        ? aliases.get(identity)
+        : undefined;
+    return displayName ? { ...raw, sender: displayName, senderSource: "display" } : raw;
+  });
+}
+
+export function inheritInstagramRawSenders(rawMessages: RawMessage[]): RawMessage[] {
+  let lastExternalSender: string | undefined;
+  return rawMessages.map((raw) => {
+    const normalizedSender = normalizeSenderLabel(raw.sender);
+    if (normalizedSender === "나") {
+      lastExternalSender = undefined;
+      return raw;
+    }
+    if (raw.kind === "reel" && raw.senderSource === "profile" && lastExternalSender) {
+      return { ...raw, sender: lastExternalSender, senderInferred: true };
+    }
+    if (raw.sender && raw.sender !== "unknown") {
+      // Keep the full reply label on this row so normalizeMessage can create
+      // replyTo metadata, but only carry the actual sender name into following
+      // unlabeled bubbles. Otherwise one reply turns the rest of the sender
+      // run into replies as well.
+      lastExternalSender = normalizedSender ?? raw.sender;
+      return raw;
+    }
+    return lastExternalSender
+      ? { ...raw, sender: lastExternalSender, senderInferred: true }
+      : raw;
+  });
 }
 
 export class InstagramWebConnector extends EventEmitter implements ChatConnector {
@@ -291,9 +499,11 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
   private browserLabel = "Chromium";
   private activeConversationOverride?: string;
   private loadingOlder = false;
+  private readingOlderWindow = false;
   private preserveLoadedConversations = false;
   private stopped = false;
   private readonly messageHistory = new Map<string, ChatMessage[]>();
+  private readonly senderAliases = new Map<string, Map<string, string>>();
   private snapshot: ChatSnapshot = {
     state: "starting",
     conversations: [],
@@ -322,40 +532,85 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
 
     while (this.refreshRunning) await page.waitForTimeout(50);
     const previousCount = this.messageHistory.get(threadId)?.length ?? this.snapshot.messages.length;
-    // Set this before scrolling because the DOM observer can refresh as soon
-    // as Instagram inserts virtualized older rows. Marking it afterwards lets
-    // that first refresh append old messages as if they were new.
+    // Freeze passive refreshes before taking the anchor snapshot. Otherwise a
+    // DOM event can race between the snapshot and the scroll itself.
     this.loadingOlder = true;
     try {
-      const moved = await page.locator("main").evaluate((main): boolean => {
-        const candidates = [...main.querySelectorAll<HTMLElement>("div")]
-          .filter((element) => {
-            const rect = element.getBoundingClientRect();
-            const style = getComputedStyle(element);
-            return (
-              rect.width > 280 &&
-              rect.height > 180 &&
-              rect.left > window.innerWidth * 0.3 &&
-              element.scrollHeight > element.clientHeight + 30 &&
-              /(auto|scroll)/.test(style.overflowY)
-            );
-          })
-          .sort((left, right) => left.clientWidth * left.clientHeight - right.clientWidth * right.clientHeight);
-        const scroller = candidates[0];
-        if (!scroller) return false;
-        const before = scroller.scrollTop;
-        const amount = Math.max(400, Math.floor(scroller.clientHeight * 0.8));
-        scroller.scrollBy({ top: -amount, behavior: "instant" });
-        if (scroller.scrollTop === before && before === 0) {
-          scroller.scrollTop = -amount;
-        }
-        return scroller.scrollTop !== before;
-      }).catch(() => false);
-      if (!moved) return 0;
+      const beforeWindow = await this.readVisibleMessages(page, threadId);
+      if (beforeWindow.length === 0) return 0;
+      const scrollFromCurrent = async (fraction: number) =>
+        page.locator("main").evaluate((main, scrollFraction): {
+          moved: boolean;
+          previousScrollTop: number;
+        } => {
+          const candidates = [...main.querySelectorAll<HTMLElement>("div")]
+            .filter((element) => {
+              const rect = element.getBoundingClientRect();
+              const style = getComputedStyle(element);
+              return (
+                rect.width > 280 &&
+                rect.height > 180 &&
+                rect.left > window.innerWidth * 0.3 &&
+                element.scrollHeight > element.clientHeight + 30 &&
+                /(auto|scroll)/.test(style.overflowY)
+              );
+            })
+            .sort((left, right) => left.clientWidth * left.clientHeight - right.clientWidth * right.clientHeight);
+          const scroller = candidates[0];
+          if (!scroller) return { moved: false, previousScrollTop: 0 };
+          const before = scroller.scrollTop;
+          const amount = Math.max(40, Math.floor(scroller.clientHeight * scrollFraction));
+          scroller.scrollBy({ top: -amount, behavior: "instant" });
+          if (scroller.scrollTop === before && before === 0) scroller.scrollTop = -amount;
+          return { moved: scroller.scrollTop !== before, previousScrollTop: before };
+        }, fraction).catch(() => ({ moved: false, previousScrollTop: 0 }));
+      const restoreScroll = async (previousScrollTop: number) => {
+        await page.locator("main").evaluate((main, targetScrollTop) => {
+          const candidates = [...main.querySelectorAll<HTMLElement>("div")]
+            .filter((element) => {
+              const rect = element.getBoundingClientRect();
+              const style = getComputedStyle(element);
+              return (
+                rect.width > 280 &&
+                rect.height > 180 &&
+                rect.left > window.innerWidth * 0.3 &&
+                element.scrollHeight > element.clientHeight + 30 &&
+                /(auto|scroll)/.test(style.overflowY)
+              );
+            })
+            .sort((left, right) => left.clientWidth * left.clientHeight - right.clientWidth * right.clientHeight);
+          const scroller = candidates[0];
+          if (scroller) scroller.scrollTop = targetScrollTop;
+        }, previousScrollTop).catch(() => undefined);
+      };
 
-      await page.waitForTimeout(450);
-      await this.performRefresh();
-      return Math.max(0, (this.messageHistory.get(threadId)?.length ?? 0) - previousCount);
+      let afterWindow: ChatMessage[] = [];
+      let foundContinuousWindow = false;
+      for (const fraction of [0.3, 0.15, 0.08]) {
+        const scrollResult = await scrollFromCurrent(fraction);
+        if (!scrollResult.moved) return 0;
+        await page.waitForTimeout(450);
+        afterWindow = await this.readVisibleMessages(page, threadId);
+        if (afterWindow.length > 0 && messageWindowsShareAnchor(beforeWindow, afterWindow)) {
+          foundContinuousWindow = true;
+          break;
+        }
+        // Never accept a discontinuous page. Restore the known window and try
+        // a smaller overlapping movement instead of skipping the gap.
+        await restoreScroll(scrollResult.previousScrollTop);
+        await page.waitForTimeout(120);
+      }
+      if (!foundContinuousWindow) return 0;
+
+      this.readingOlderWindow = true;
+      const merged = mergeMessageWindows(
+        this.messageHistory.get(threadId) ?? this.snapshot.messages,
+        afterWindow,
+        "older",
+      ).slice(0, 500);
+      this.messageHistory.set(threadId, merged);
+      this.updateSnapshot({ ...this.snapshot, messages: merged });
+      return Math.max(0, merged.length - previousCount);
     } finally {
       this.loadingOlder = false;
     }
@@ -435,6 +690,7 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
     if (!conversation) throw new Error(`대화를 찾을 수 없습니다: ${id}`);
     const previousOverride = this.activeConversationOverride;
     const previousUrl = page.url();
+    this.readingOlderWindow = false;
 
     // Pin the target before clicking. Instagram emits DOM wake events during
     // navigation, and a refresh triggered in that window must never reuse the
@@ -486,6 +742,7 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
     const page = this.requirePage();
     const message = text.trim();
     if (!message) return;
+    this.readingOlderWindow = false;
 
     const editor = page.locator('[contenteditable="true"][role="textbox"]').last();
     await editor.waitFor({ state: "visible", timeout: 5_000 });
@@ -555,6 +812,7 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
 
   private scheduleRefresh(_reason: string, delay = 180): void {
     if (this.stopped) return;
+    if (this.loadingOlder) return;
     // A busy MQTT/WebSocket connection must not keep pushing the refresh
     // forever into the future. Coalesce bursts into one bounded refresh.
     if (this.refreshTimer) {
@@ -687,13 +945,21 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
         ? await this.readVisibleMessages(page, routeConversationId ?? activeConversationId)
         : [];
       const messageThreadId = routeConversationId ?? activeConversationId;
-      const mergedMessages = messageThreadId
-        ? mergeMessageWindows(
-            this.messageHistory.get(messageThreadId) ?? [],
-            visibleMessages,
-            this.loadingOlder ? "older" : "newer",
-          )
+      const existingMessages = messageThreadId
+        ? this.messageHistory.get(messageThreadId) ?? []
         : [];
+      // Once Chromium has scrolled into history, observer/WebSocket refreshes
+      // keep seeing a virtualized historical fragment. Ignore those passive
+      // reads; only an explicit loadOlder call is allowed to extend history.
+      const mergedMessages = messageThreadId && this.readingOlderWindow && !this.loadingOlder
+        ? existingMessages
+        : messageThreadId
+          ? mergeMessageWindows(
+              existingMessages,
+              visibleMessages,
+              this.loadingOlder ? "older" : "newer",
+            )
+          : [];
       const messages = this.loadingOlder
         ? mergedMessages.slice(0, 500)
         : mergedMessages.slice(-500);
@@ -742,6 +1008,32 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
             const rect = node.getBoundingClientRect();
             const style = getComputedStyle(node);
             const text = node.innerText.trim();
+            const semanticLabels = [
+              node.getAttribute("aria-label"),
+              node.getAttribute("title"),
+              ...[...node.querySelectorAll<HTMLElement>("[aria-label], [title], img[alt]")].flatMap(
+                (candidate) => [
+                  candidate.getAttribute("aria-label"),
+                  candidate.getAttribute("title"),
+                  candidate.getAttribute("alt"),
+                ],
+              ),
+            ]
+              .map((label) => label?.replaceAll("\u00a0", " ").trim())
+              .filter((label): label is string => Boolean(label));
+            const detectedMediaKind = semanticLabels.some((label) =>
+              /^(?:사진|이미지|photo|image|sent (?:a |an )?(?:photo|image))\.?$/i.test(label),
+            )
+              ? "image" as const
+              : semanticLabels.some((label) =>
+                  /^(?:동영상|비디오|video|sent (?:a )?video)\.?$/i.test(label),
+                )
+                ? "video" as const
+                : semanticLabels.some((label) =>
+                    /^(?:이모티콘|스티커|sticker|sent (?:a )?(?:sticker|emoji))\.?$/i.test(label),
+                  )
+                  ? "sticker" as const
+                  : undefined;
             const reelLink = node.matches('a[href*="/reel/"]')
               ? node
               : node.closest<HTMLElement>('a[href*="/reel/"]') ??
@@ -829,6 +1121,9 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
                   /(?:carousel_share_child_media_id|is_ineligible_for_clips_chaining=false)/i.test(sharedTargetUrl)
               )),
             );
+            const isPost = Boolean(
+              inlineShare && !isReel && /instagram\.com\/p\//i.test(sharedTargetUrl),
+            );
             const reelTitle = reelLink
               ? [
                   reelLink.getAttribute("aria-label"),
@@ -845,8 +1140,8 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
               : undefined;
             const isVisibleChatArea =
               rect.x > Math.min(470, viewportWidth * 0.38) &&
-              rect.y > 70 &&
-              rect.bottom < viewportHeight - 45;
+              rect.bottom > 70 &&
+              rect.y < viewportHeight - 45;
             const isBubbleShape =
               rect.width >= 20 &&
               rect.width < viewportWidth * 0.55 &&
@@ -857,19 +1152,87 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
               style.backgroundColor !== "rgba(0, 0, 0, 0)" &&
               style.backgroundColor !== "rgb(255, 255, 255)" &&
               style.backgroundColor !== "rgb(0, 0, 0)";
-            if (!text || !isVisibleChatArea || !isBubbleShape || !hasBubbleColor) return [];
+            const isInlineShareGroup = Boolean(
+              (isReel || isPost) && node.matches('[role="group"]'),
+            );
+            // React props are reachable from several descendants of the same
+            // share card. Treat only the semantic message-group root as the
+            // message or one reel/post is emitted once per matching child.
+            if ((isReel || isPost) && !isInlineShareGroup) return [];
+            if (
+              (!text && !detectedMediaKind) ||
+              !isVisibleChatArea ||
+              (!isInlineShareGroup && (!isBubbleShape || !hasBubbleColor))
+            ) return [];
 
-            const sentByMe = rect.right > viewportWidth * 0.9;
+            const sentByMe = !isInlineShareGroup && rect.right > viewportWidth * 0.9;
             let sender = sentByMe ? "나" : "unknown";
             let senderSource: "display" | "profile" | undefined;
+            let senderIdentity: string | null = null;
+            let groupAriaLabel: string | null = null;
+            let groupReplyTo: { sender?: string; text?: string } | undefined;
             if (!sentByMe) {
+              const ownLabel = node.getAttribute("aria-label");
+              if (
+                ownLabel &&
+                (/^.+? replied to .+$/i.test(ownLabel) ||
+                  /^.+?님이 (?:회원님|.+?님)에게 (?:보낸 답장|답장했습니다)$/.test(ownLabel))
+              ) {
+                sender = ownLabel;
+                senderSource = "display";
+              }
+              // Large inline-share cards can put more than nine wrappers
+              // between the actual bubble and the semantic message group.
+              // The group's first line is Instagram's visible sender label.
+              const messageGroup = node.closest<HTMLElement>('[role="group"]');
+              const groupLines = messageGroup
+                ? [...new Set(
+                    messageGroup.innerText
+                      .split("\n")
+                      .map((line) => line.trim())
+                      .filter(Boolean),
+                  )]
+                : [];
+              const groupSender = groupLines[0];
+              const isReplyGroup = Boolean(
+                groupSender && (/replied to/i.test(groupSender) || /답장/.test(groupSender)),
+              );
+              const quoteButton = node.closest<HTMLElement>('[role="button"]');
+              const isQuotedReplyBubble = Boolean(
+                isReplyGroup &&
+                groupLines[1] === text &&
+                quoteButton &&
+                messageGroup?.contains(quoteButton),
+              );
+              if (isQuotedReplyBubble) return [];
+              if (
+                sender === "unknown" &&
+                groupSender &&
+                groupLines.length >= 2 &&
+                groupSender !== text &&
+                groupSender.length <= 80
+              ) {
+                sender = groupSender;
+                senderSource = "display";
+                if (isReplyGroup) {
+                  groupAriaLabel = groupSender;
+                  const replyTarget =
+                    groupSender.match(/^.+? replied to (.+)$/i)?.[1]?.trim() ??
+                    groupSender.match(/^.+?님이 (.+?)님에게 보낸 답장$/)?.[1]?.trim() ??
+                    (groupSender.match(/^.+?님이 회원님에게 답장했습니다$/) ? "나" : undefined);
+                  groupReplyTo = {
+                    ...(replyTarget ? { sender: replyTarget } : {}),
+                    ...(groupLines[1] ? { text: groupLines[1] } : {}),
+                  };
+                }
+              }
               let container = node.parentElement;
               const containers: HTMLElement[] = [];
               for (let depth = 0; depth < 9 && container; depth += 1) {
                 containers.push(container);
                 container = container.parentElement;
               }
-              for (const candidateContainer of containers) {
+              for (const candidateContainer of sender === "unknown" ? containers : []) {
                 const containerRect = candidateContainer.getBoundingClientRect();
                 const lines = [
                   ...new Set(
@@ -882,7 +1245,7 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
                 const candidate = lines[0];
                 if (
                   containerRect.height < 300 &&
-                  lines.length >= 2 &&
+                  lines.length >= (detectedMediaKind ? 1 : 2) &&
                   candidate &&
                   candidate !== text &&
                   candidate.length <= 80
@@ -911,6 +1274,12 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
                   if (profileLabel) {
                     sender = profileLabel;
                     senderSource = "profile";
+                    const profileHref = [
+                      ...(candidateContainer.matches("a[href]") ? [candidateContainer] : []),
+                      ...candidateContainer.querySelectorAll<HTMLElement>("a[href]"),
+                    ].map((candidateNode) => candidateNode.getAttribute("href"))
+                      .find((href) => /^\/[^/?#]+\/?(?:\?.*)?$/.test(href ?? ""));
+                    senderIdentity = profileHref?.match(/^\/([^/?#]+)/)?.[1] ?? profileLabel;
                     break;
                   }
                 }
@@ -921,36 +1290,48 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
                 ? reelTitle
                   ? `${reelTitle.replace(/\s*\(릴스\)$/, "")}(릴스)`
                   : "(릴스)"
+                : isPost
+                  ? "(게시물)"
+                  : detectedMediaKind === "image"
+                    ? "사진을 보냈습니다."
+                    : detectedMediaKind === "video"
+                      ? "동영상을 보냈습니다."
+                      : detectedMediaKind === "sticker"
+                        ? "이모티콘을 보냈습니다."
                 : text,
               sender,
+              ...(groupAriaLabel ? { ariaLabel: groupAriaLabel } : {}),
+              ...(groupReplyTo ? { replyTo: groupReplyTo } : {}),
               timestamp: null,
               ...(isReel ? { kind: "reel" as const } : {}),
+              ...(isPost ? { kind: "post" as const } : {}),
+              ...(!isReel && !isPost && detectedMediaKind ? { kind: detectedMediaKind } : {}),
               ...(senderSource ? { senderSource } : {}),
+              ...(senderIdentity ? { senderIdentity } : {}),
             }];
           });
       });
     }
 
-    let lastExternalSender: string | undefined;
-    rawMessages = rawMessages.map((raw) => {
-      if (raw.sender === "나") {
-        lastExternalSender = undefined;
-        return raw;
-      }
-      if (raw.kind === "reel" && raw.senderSource === "profile" && lastExternalSender) {
-        return { ...raw, sender: lastExternalSender };
-      }
-      if (raw.sender && raw.sender !== "unknown") {
-        lastExternalSender = raw.sender;
-        return raw;
-      }
-      return lastExternalSender ? { ...raw, sender: lastExternalSender } : raw;
-    });
+    const aliases = this.senderAliases.get(threadId) ?? new Map<string, string>();
+    this.senderAliases.set(threadId, aliases);
+    rawMessages = canonicalizeInstagramSenders(rawMessages, aliases);
+    const storedMessages = this.messageHistory.get(threadId);
+    if (storedMessages) {
+      this.messageHistory.set(
+        threadId,
+        storedMessages.map((message) => {
+          const displayName = aliases.get(message.sender);
+          return displayName ? { ...message, sender: displayName } : message;
+        }),
+      );
+    }
+    rawMessages = inheritInstagramRawSenders(rawMessages);
 
-    return rawMessages
+    const normalizedMessages = rawMessages
       .map((raw, index) => normalizeMessage(threadId, raw, index))
-      .filter((item): item is ChatMessage => item !== undefined)
-      .slice(-100);
+      .filter((item): item is ChatMessage => item !== undefined);
+    return repairReplyQuoteSenders(normalizedMessages).slice(-100);
   }
 
   private updateSnapshot(snapshot: ChatSnapshot): void {

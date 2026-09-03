@@ -162,6 +162,7 @@ export class KakaoNativeConnector extends EventEmitter implements ChatConnector 
         {
           id: `sent-${Date.now()}-${stableHash(normalizedText)}`,
           threadId,
+          kind: "text" as const,
           sender: "나",
           text: normalizedText,
         },

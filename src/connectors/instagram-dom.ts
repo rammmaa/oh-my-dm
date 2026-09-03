@@ -1,4 +1,10 @@
-import type { ChatMessage, Conversation } from "../domain.js";
+import type {
+  ChatMessage,
+  Conversation,
+  MessageKind,
+  MessageReference,
+} from "../domain.js";
+import { normalizeMessageContent, parseReplyReference } from "../message-content.js";
 
 export interface RawConversation {
   href: string;
@@ -12,8 +18,12 @@ export interface RawMessage {
   sender?: string | null;
   ariaLabel?: string | null;
   timestamp?: string | null;
-  kind?: "reel";
+  kind?: MessageKind;
+  edited?: boolean;
+  replyTo?: MessageReference;
   senderSource?: "display" | "profile";
+  senderInferred?: boolean;
+  senderIdentity?: string | null;
 }
 
 export function threadIdFromHref(href: string): string | undefined {
@@ -158,8 +168,8 @@ export function normalizeMessage(
   raw: RawMessage,
   index: number,
 ): ChatMessage | undefined {
-  const text = uniqueLines(raw.text).join("\n").trim();
-  if (!text) return undefined;
+  const content = normalizeMessageContent(uniqueLines(raw.text).join("\n"), raw.kind);
+  if (!content) return undefined;
 
   const aria = raw.ariaLabel?.trim() ?? "";
   const sender =
@@ -167,9 +177,25 @@ export function normalizeMessage(
     normalizeSenderLabel(aria.match(/^([^,:]+)[,:]/)?.[1]) ||
     "unknown";
   const timestamp = raw.timestamp?.trim() || undefined;
-  const id = stableHash(`${threadId}\0${sender}\0${timestamp ?? ""}\0${text}\0${index}`);
+  const replyTo = raw.replyTo ?? parseReplyReference(raw.sender) ?? parseReplyReference(aria);
+  const kind = replyTo && content.kind === "text" ? "reply" : content.kind;
+  const edited = raw.edited || content.edited || undefined;
+  const replyFingerprint = replyTo ? `${replyTo.sender ?? ""}\0${replyTo.text ?? ""}` : "";
+  const id = stableHash(
+    `${threadId}\0${sender}\0${timestamp ?? ""}\0${kind}\0${content.text}\0${edited ? "1" : "0"}\0${replyFingerprint}\0${index}`,
+  );
 
-  return { id, threadId, sender, text, timestamp };
+  return {
+    id,
+    threadId,
+    kind,
+    sender,
+    ...(raw.senderInferred ? { senderInferred: true } : {}),
+    text: content.text,
+    timestamp,
+    ...(edited ? { edited: true } : {}),
+    ...(replyTo ? { replyTo } : {}),
+  };
 }
 
 export function normalizeSenderLabel(value?: string | null): string | undefined {
@@ -205,102 +231,148 @@ export function mergeMessageWindows(
 ): ChatMessage[] {
   if (existing.length === 0) return inheritGroupedSenders(incoming);
   if (incoming.length === 0) return inheritGroupedSenders(existing);
-  if (containsWindow(existing, incoming)) {
-    return inheritGroupedSenders(enrichUnknownSenders(existing, incoming));
-  }
-  if (containsWindow(incoming, existing)) return inheritGroupedSenders(incoming);
+  const matching = matchIncomingMessages(existing, incoming);
+  const anchoredExisting = enrichMessages(existing, matching.byExistingIndex);
+  // Never reorder history that has already been accepted. Instagram may
+  // virtualize a historical DOM window as [recent anchor, older rows], or
+  // return only scattered anchor rows. Direction tells us which side owns all
+  // genuinely new rows; occurrence-aware matching prevents repeated messages
+  // with identical text from being collapsed.
+  return repairReplyQuoteSenders(
+    inheritGroupedSenders(
+      direction === "older"
+        ? [...matching.unmatched, ...anchoredExisting]
+        : [...anchoredExisting, ...matching.unmatched],
+    ),
+  );
+}
 
-  const olderOverlap = suffixPrefixOverlap(incoming, existing);
-  const newerOverlap = suffixPrefixOverlap(existing, incoming);
-  let merged: ChatMessage[];
-  if (direction === "older") {
-    if (olderOverlap > 0) merged = [...incoming.slice(0, -olderOverlap), ...existing];
-    else if (newerOverlap > 0) merged = [...existing, ...incoming.slice(newerOverlap)];
-    else merged = [...incoming, ...existing];
-  } else if (newerOverlap > 0) {
-    merged = [...existing, ...incoming.slice(newerOverlap)];
-  } else if (olderOverlap > 0) {
-    merged = [...incoming.slice(0, -olderOverlap), ...existing];
-  } else {
-    merged = [...existing, ...incoming];
+export function messageWindowsShareAnchor(
+  left: ChatMessage[],
+  right: ChatMessage[],
+): boolean {
+  return left.some((message) => right.some((candidate) => sameMessage(message, candidate)));
+}
+
+export function repairReplyQuoteSenders(messages: ChatMessage[]): ChatMessage[] {
+  const repaired = messages.map((message) => ({ ...message }));
+  for (let replyIndex = 0; replyIndex < repaired.length; replyIndex += 1) {
+    const reply = repaired[replyIndex]!;
+    const target = reply.replyTo?.sender;
+    if (reply.kind !== "reply" || !target) continue;
+
+    let ownIndex = replyIndex - 1;
+    while (ownIndex >= 0 && repaired[ownIndex]!.sender !== "나") ownIndex -= 1;
+    if (ownIndex < 0 || replyIndex - ownIndex > 6) continue;
+
+    for (let quoteIndex = ownIndex - 1; quoteIndex >= Math.max(0, ownIndex - 6); quoteIndex -= 1) {
+      const quote = repaired[quoteIndex]!;
+      if (quote.sender === "나") break;
+      if (quote.text !== reply.text || quote.sender !== reply.sender) continue;
+      const precedingSender = repaired
+        .slice(Math.max(0, quoteIndex - 4), quoteIndex)
+        .reverse()
+        .find((message) => message.sender !== "나" && message.sender !== "unknown")?.sender;
+      if (precedingSender !== target) continue;
+      const { replyTo: _replyTo, ...plainQuote } = quote;
+      repaired[quoteIndex] = {
+        ...plainQuote,
+        kind: "text",
+        sender: target,
+        senderInferred: true,
+      };
+      break;
+    }
   }
-  return inheritGroupedSenders(enrichUnknownSenders(merged, incoming));
+  return repaired;
+}
+
+function matchIncomingMessages(
+  existing: ChatMessage[],
+  incoming: ChatMessage[],
+): { unmatched: ChatMessage[]; byExistingIndex: Map<number, ChatMessage> } {
+  const usedExisting = new Set<number>();
+  const byExistingIndex = new Map<number, ChatMessage>();
+  const unmatched: ChatMessage[] = [];
+  for (const message of incoming) {
+    let matchIndex = -1;
+    let matchScore = -1;
+    for (let index = 0; index < existing.length; index += 1) {
+      const candidate = existing[index]!;
+      if (usedExisting.has(index) || !sameMessage(candidate, message)) continue;
+      const score =
+        (candidate.sender === message.sender ? 8 : 0) +
+        (candidate.kind === message.kind ? 4 : 0) +
+        (candidate.replyTo?.sender === message.replyTo?.sender ? 2 : 0) +
+        (candidate.timestamp && candidate.timestamp === message.timestamp ? 1 : 0);
+      if (score > matchScore) {
+        matchIndex = index;
+        matchScore = score;
+      }
+    }
+    if (matchIndex < 0) {
+      unmatched.push(message);
+      continue;
+    }
+    usedExisting.add(matchIndex);
+    byExistingIndex.set(matchIndex, message);
+  }
+  return { unmatched, byExistingIndex };
 }
 
 export function inheritGroupedSenders(messages: ChatMessage[]): ChatMessage[] {
   let lastExternalSender: string | undefined;
-  const forwardFilled = messages.map((message) => {
+  return messages.map((message) => {
     if (message.sender === "나") {
       lastExternalSender = undefined;
       return message;
     }
-    if (message.sender !== "unknown") {
+    if (message.sender !== "unknown" && !message.senderInferred) {
       lastExternalSender = message.sender;
       return message;
     }
-    return lastExternalSender ? { ...message, sender: lastExternalSender } : message;
+    return lastExternalSender
+      ? { ...message, sender: lastExternalSender, senderInferred: true }
+      : message;
   });
-
-  // Instagram attaches the avatar/profile link to either edge of a consecutive
-  // message group depending on the current web layout. Fill from the following
-  // labelled bubble as well, but never cross one of our own messages.
-  let nextExternalSender: string | undefined;
-  return forwardFilled.map((_, index) => {
-    const message = forwardFilled[forwardFilled.length - 1 - index]!;
-    if (message.sender === "나") {
-      nextExternalSender = undefined;
-      return message;
-    }
-    if (message.sender !== "unknown") {
-      nextExternalSender = message.sender;
-      return message;
-    }
-    return nextExternalSender ? { ...message, sender: nextExternalSender } : message;
-  }).reverse();
 }
 
-function enrichUnknownSenders(
+function enrichMessages(
   existing: ChatMessage[],
-  incoming: ChatMessage[],
+  matchedByIndex: Map<number, ChatMessage>,
 ): ChatMessage[] {
-  return existing.map((message) => {
-    if (message.sender !== "unknown") return message;
-    const matches = incoming.filter(
-      (candidate) =>
-        candidate.sender !== "unknown" &&
-        candidate.text === message.text &&
-        candidate.timestamp === message.timestamp,
-    );
-    return matches.length === 1 ? { ...message, sender: matches[0]!.sender } : message;
+  return existing.map((message, index) => {
+    const candidate = matchedByIndex.get(index);
+    if (!candidate) return message;
+    return {
+      ...message,
+      ...(message.kind === "text" && candidate.kind === "reply"
+        ? { kind: "reply" as const }
+        : {}),
+      ...(!message.replyTo && candidate.replyTo ? { replyTo: candidate.replyTo } : {}),
+      ...(!message.edited && candidate.edited ? { edited: true } : {}),
+    };
   });
-}
-
-function containsWindow(haystack: ChatMessage[], needle: ChatMessage[]): boolean {
-  if (needle.length > haystack.length) return false;
-  for (let start = 0; start <= haystack.length - needle.length; start += 1) {
-    if (needle.every((message, index) => sameMessage(message, haystack[start + index]!))) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function suffixPrefixOverlap(left: ChatMessage[], right: ChatMessage[]): number {
-  const limit = Math.min(left.length, right.length);
-  for (let size = limit; size > 0; size -= 1) {
-    if (
-      left.slice(-size).every((message, index) => sameMessage(message, right[index]!))
-    ) {
-      return size;
-    }
-  }
-  return 0;
 }
 
 function sameMessage(left: ChatMessage, right: ChatMessage): boolean {
-  const senderMatches =
-    left.sender === right.sender || left.sender === "unknown" || right.sender === "unknown";
-  return left.text === right.text && left.timestamp === right.timestamp && senderMatches;
+  const senderMatches = Boolean(
+    left.sender === right.sender ||
+    left.sender === "unknown" ||
+    right.sender === "unknown" ||
+    left.senderInferred ||
+    right.senderInferred,
+  );
+  const kindMatches =
+    left.kind === right.kind ||
+    (left.kind === "text" && right.kind === "reply") ||
+    (left.kind === "reply" && right.kind === "text");
+  return (
+    kindMatches &&
+    left.text === right.text &&
+    left.timestamp === right.timestamp &&
+    senderMatches
+  );
 }
 
 function uniqueLines(value: string): string[] {

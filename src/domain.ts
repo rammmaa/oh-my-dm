@@ -15,12 +15,33 @@ export interface Conversation {
   unread: boolean;
 }
 
+export type MessageKind =
+  | "text"
+  | "image"
+  | "video"
+  | "reel"
+  | "post"
+  | "sticker"
+  | "reaction"
+  | "reply"
+  | "deleted"
+  | "system";
+
+export interface MessageReference {
+  sender?: string;
+  text?: string;
+}
+
 export interface ChatMessage {
   id: string;
   threadId: string;
+  kind: MessageKind;
   text: string;
   sender: string;
+  senderInferred?: boolean;
   timestamp?: string;
+  edited?: boolean;
+  replyTo?: MessageReference;
 }
 
 export interface ChatSnapshot {

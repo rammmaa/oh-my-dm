@@ -4,6 +4,7 @@ import stringWidth from "string-width";
 import wrapAnsi from "wrap-ansi";
 
 import type { ChatConnector, ChatSnapshot, Conversation } from "../domain.js";
+import { formatMessagePreview, formatMessageText } from "../message-content.js";
 import { APP_VERSION } from "../version.js";
 import { getMessageWindow, getOlderMessageOffset } from "./message-window.js";
 import {
@@ -72,7 +73,7 @@ export function App({
   onModelChange,
   onLanguageChange,
 }: AppProps) {
-  const { exit } = useApp();
+  const { exit, suspendTerminal } = useApp();
   const { stdout, write } = useStdout();
   const terminalSize = useTerminalSize(stdout);
   const [snapshot, setSnapshot] = useState(connector.getSnapshot());
@@ -131,14 +132,18 @@ export function App({
   );
   const showSignature = terminalSize.columns >= 48;
   const signatureExtraRows = (showSignature ? 2 : 0) + 1;
-  const chatViewReservedRows = viewMode === "chat" ? 1 : 0;
+  const pathFooterVisible = viewMode === "chat" || viewMode === "history";
+  const pathFooterReservedRows = pathFooterVisible ? 1 : 0;
+  const staticHeaderRows = viewMode === "history" ? 0 : signatureExtraRows;
+  const baseChromeRows = viewMode === "history" ? 5 : 6;
+  const commandChromeRows = viewMode === "history" ? 8 : 9;
   const mainHeight = Math.max(
     6,
     terminalSize.rows -
       (commandMode
-        ? commandWindowSize + 9 + chatViewReservedRows
-        : 6 + chatViewReservedRows) -
-      signatureExtraRows,
+        ? commandWindowSize + commandChromeRows + pathFooterReservedRows
+        : baseChromeRows + pathFooterReservedRows) -
+      staticHeaderRows,
   );
   const visibleMessageCount = Math.max(1, mainHeight - 4);
   const messageContentWidth = Math.max(20, terminalSize.columns - 2);
@@ -147,7 +152,7 @@ export function App({
     () =>
       transcript.reduce((rows, item) => {
         if (item.kind === "signature") return rows + (item.full ? 4 : 2);
-        const messageText = item.message.text.replaceAll("\n", " ");
+        const messageText = formatMessageText(item.message, language).replaceAll("\n", " ");
         const messageRows =
           item.message.sender === "나"
             ? formatUserMessageLines(messageText, messageContentWidth).length
@@ -159,20 +164,24 @@ export function App({
               );
         return rows + messageRows + 1;
       }, 0),
-    [messageContentWidth, transcript],
+    [language, messageContentWidth, transcript],
   );
   const messageWindow = useMemo(
     () =>
       getMessageWindow(snapshot.messages, visibleMessageCount, messageOffset, (message) =>
         message.sender === "나"
-          ? formatUserMessageLines(message.text, messageContentWidth).length
+          ? formatUserMessageLines(
+              formatMessageText(message, language),
+              messageContentWidth,
+            ).length
           : wrapTerminalLines(
-              `${message.sender}: ${message.text.replaceAll("\n", " ")}`,
+              `${message.sender}: ${formatMessageText(message, language).replaceAll("\n", " ")}`,
               conversationContentWidth,
             ).length,
       ),
     [
       conversationContentWidth,
+      language,
       messageContentWidth,
       messageOffset,
       snapshot.messages,
@@ -255,12 +264,18 @@ export function App({
 
   useEffect(() => {
     if (viewMode === "history" || !historyAlternateScreen.current) return;
-    stdout.write("\u001B[?1049l");
-    historyAlternateScreen.current = false;
-    // The primary buffer was never changed. The destination frame rendered in
-    // the alternate buffer is identical, so repainting it here would erase from
-    // the restored IME cursor position and duplicate the footer.
-  }, [stdout, viewMode]);
+    // Clear the history frame while it still owns the alternate buffer, then
+    // restore the primary buffer and force Ink to repaint the complete chat
+    // chrome. A raw buffer switch followed by Ink's normal partial diff leaves
+    // unchanged composer/footer rows missing or at the old cursor position.
+    void (async () => {
+      const suspension = await suspendTerminal();
+      stdout.write("\u001B[?1049l");
+      historyAlternateScreen.current = false;
+      await nextRenderTurn();
+      await suspension.resume();
+    })().catch((next) => setError(next instanceof Error ? next.message : String(next)));
+  }, [stdout, suspendTerminal, viewMode]);
 
   useEffect(
     () => () => {
@@ -314,11 +329,18 @@ export function App({
   };
 
   const enterHistoryScreen = (): void => {
-    if (!historyAlternateScreen.current) {
+    if (historyAlternateScreen.current) {
+      setViewMode("history");
+      return;
+    }
+    void (async () => {
+      const suspension = await suspendTerminal();
       stdout.write("\u001B[?1049h\u001B[2J\u001B[H");
       historyAlternateScreen.current = true;
-    }
-    setViewMode("history");
+      setViewMode("history");
+      await nextRenderTurn();
+      await suspension.resume();
+    })().catch(showError);
   };
 
   const leaveHistoryScreenImmediately = (): void => {
@@ -850,7 +872,6 @@ export function App({
     }
     setMessagesHidden(false);
     setMessageOffset(0);
-    leaveHistoryScreenImmediately();
     setViewMode("chat");
     void connector.sendMessage(parsed.text).catch(showError);
   };
@@ -883,7 +904,7 @@ export function App({
               </Box>
             );
           }
-          const messageText = item.message.text.replaceAll("\n", " ");
+          const messageText = formatMessageText(item.message, language).replaceAll("\n", " ");
           return item.message.sender === "나" ? (
             <Box key={item.id} flexDirection="column" marginTop={1} paddingX={1}>
               {formatUserMessageLines(messageText, messageContentWidth).map((line, index) => (
@@ -916,7 +937,6 @@ export function App({
         {viewMode === "history" ? (
           <Box flexGrow={1} flexDirection="column" borderStyle="single" paddingX={1}>
             <Text>
-              <Text color={theme.muted}>{displayModelLabel} · </Text>
               <Text bold color={theme.path}>{activePath}</Text>
               <Text color={theme.muted}> · history</Text>
             </Text>
@@ -924,7 +944,7 @@ export function App({
               <Text color={theme.muted}>{copy.noMessages}</Text>
             ) : (
               messageWindow.items.map((message) => {
-                const messageText = message.text.replaceAll("\n", " ");
+                const messageText = formatMessageText(message, language).replaceAll("\n", " ");
                 if (message.sender === "나") {
                   const lines = clipTerminalLines(
                     formatUserMessageLines(messageText, conversationContentWidth),
@@ -1024,7 +1044,10 @@ export function App({
                   Math.max(0, titleCellWidth - 1),
                 );
                 const preview = truncateToWidth(
-                  conversation.preview?.replaceAll("\n", " ") ?? "",
+                  formatMessagePreview(
+                    conversation.preview?.replaceAll("\n", " ") ?? "",
+                    language,
+                  ),
                   conversationPreviewWidth,
                 );
                 return (
@@ -1223,7 +1246,7 @@ export function App({
           </Text>
         )}
       </Box>
-      {viewMode === "chat" && (
+      {pathFooterVisible && (
         <Text>
           {"  "}
           <Text color={theme.muted}>{displayModelLabel} · </Text>
@@ -1274,6 +1297,10 @@ function serviceStateColor(state: ChatSnapshot["state"], theme: UiTheme): string
   if (state === "connected") return theme.success;
   if (state === "error" || state === "disconnected") return theme.danger;
   return theme.warning;
+}
+
+function nextRenderTurn(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 function useTerminalSize(stdout: NodeJS.WriteStream): { rows: number; columns: number } {

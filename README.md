@@ -23,6 +23,7 @@ The main goal is simple: let you check and send DMs more privately in shared off
 
 - Sign in manually with a personal Instagram account
 - Browse conversations and exchange text messages from the terminal
+- Normalize photos, videos, Reels, posts, stickers, reactions, replies, edits, deletions, and system notices into shared message types
 - See actual sender names in group conversations
 - Browse and send KakaoTalk messages on macOS
 - Use one unified conversation list and inspect connections with `/connectors`
@@ -68,10 +69,43 @@ OH_MY_DM_DATA="$PWD/.oh-my-dm" npm run dev
 The regular TUI runs the bundled Playwright Chromium headlessly. Use a visible browser only for debugging:
 
 ```bash
-oh-my-dm --headed
+oh-my-dm chat --headed
 oh-my-dm doctor
 oh-my-dm logout instagram
 ```
+
+### First run
+
+1. Run `oh-my-dm login instagram`, sign in in the dedicated Chromium window, then press `Ctrl+C` in the terminal.
+2. Run `oh-my-dm` or its short alias, `dm`.
+3. Type `/conversations` to open the conversation list.
+4. Use `Tab`, `←`, or `→` to switch between Instagram and KakaoTalk. Use `↑`/`↓` to select a conversation and `Enter` to open it.
+5. Type a text message and press `Enter` to send it. Sending is confirmed by the original service before it appears as your message.
+6. With an empty composer, press `↑` or `PageUp` to open history. In history, use `↑`/`PageUp` for older messages, `↓`/`PageDown` for newer messages, and `Esc` to return.
+
+`Esc` returns from menus and history. In the normal chat view it exits oh-my-dm. `/exit` and `Ctrl+C` also close the application and its connector processes.
+
+### Platform and content support
+
+| Connector | Support | Notes |
+| --- | --- | --- |
+| Instagram | macOS and Linux are CI-tested | Uses the bundled Playwright Chromium. Windows is not yet officially verified. |
+| KakaoTalk | macOS only | Requires the desktop KakaoTalk app, an active login, and Accessibility permission. |
+
+Text conversations are fully rendered. Photos, videos, Reels, posts, stickers, reactions, replies, edits, deletions, and system notices are normalized into connector-independent message types and shown with consistent text markers when the source UI exposes them. Shared Reels use `title(릴스)` when Instagram provides a title, or `(릴스)` otherwise. Media files themselves are not downloaded or rendered, and content hidden from the source app's visible DOM or accessibility tree may still be omitted.
+
+The model name and effort selected with `/model` are visual workspace labels only. They do not connect an AI model, send conversation content to an AI provider, or change connector behavior.
+
+### Local data and privacy
+
+Messages are not saved by oh-my-dm, but a small amount of local state is required:
+
+- The dedicated Instagram browser profile contains login cookies and must be treated as sensitive.
+- UI language, theme, and model-label preferences are saved locally.
+- `/clear` clears only the terminal view and scrollback. It does not delete messages from Instagram or KakaoTalk.
+- `oh-my-dm logout instagram` deletes the dedicated Instagram browser profile and signs this CLI out. It does not affect sessions in your other browsers.
+
+Do not commit, share, or back up `~/.oh-my-dm/browser` to an untrusted location. Older installations may continue using the legacy `~/.oh-my-chat` directory so existing login sessions are not lost.
 
 ### Language
 
@@ -105,6 +139,34 @@ Type `/` to open the command palette. Navigate with arrow keys, press `Tab` to a
 
 To send a regular message beginning with `/`, type it with two slashes, such as `//message`.
 
+`/open` requires a unique conversation-name match. If several conversations have the same display name, use `/conversations` and select the correct row instead. `/unread` and `/all` change the conversation-list filter; they do not alter read state on the original service.
+
+### Update and uninstall
+
+```bash
+npm install --global oh-my-dm@latest
+oh-my-dm doctor
+```
+
+To remove the CLI, optionally delete its Instagram session first and then uninstall the package:
+
+```bash
+oh-my-dm logout instagram
+npm uninstall --global oh-my-dm
+```
+
+### Troubleshooting
+
+| Symptom | What to do |
+| --- | --- |
+| `oh-my-dm` is not found or opens a same-named directory | Reinstall globally, open a new terminal, or run `rehash` in zsh. Confirm with `command -v oh-my-dm`. |
+| npm blocks the install script | Reinstall with `npm install --global --allow-scripts=oh-my-dm oh-my-dm`. The script patches Ink and downloads the dedicated Chromium. |
+| Instagram asks for login or conversations never appear | Run `oh-my-dm login instagram` again. If the session is corrupted, run `oh-my-dm logout instagram` and log in again. |
+| Chromium cannot be found | Run `oh-my-dm doctor`, then reinstall with install scripts allowed. |
+| KakaoTalk does not connect, open a room, or send | Confirm the app is installed and signed in, grant Accessibility to the exact terminal app running oh-my-dm, then restart both KakaoTalk and the terminal. |
+| A connector looks stale | Run `/refresh`. Instagram and KakaoTalk UI changes can still require an oh-my-dm update. |
+| The terminal is too narrow or rows look clipped | Enlarge the terminal window. The layout is responsive, but very small terminals cannot show every hint or preview. |
+
 ### Important
 
 Instagram DOM selectors and KakaoTalk accessibility UI structures can change without notice and may break the connectors. Instagram also restricts unauthorized automated data collection. Use this project conservatively for personal experimentation. Bulk messaging, automatic retries, and bypass mechanisms are intentionally excluded.
@@ -134,6 +196,7 @@ oh-my-dm은 Agent CLI처럼 보이도록 만든 눈치 덜 보이는 TUI 메신�
 
 - 개인 Instagram 계정으로 수동 로그인
 - 터미널에서 대화 목록 조회와 텍스트 메시지 송수신
+- 사진, 영상, 릴스, 게시물, 이모티콘, 공감, 답장, 수정, 삭제와 시스템 안내를 공통 메시지 타입으로 정규화
 - 그룹 대화의 실제 발신자 이름 표시
 - macOS 카카오톡 대화 목록·메시지 조회와 전송
 - 하나의 통합 대화 목록 사용 및 `/connectors`에서 연결 상태 확인
@@ -178,10 +241,43 @@ OH_MY_DM_DATA="$PWD/.oh-my-dm" npm run dev
 일반 TUI는 번들된 Playwright Chromium을 headless로 사용합니다. 디버깅할 때만 브라우저 창을 표시하세요.
 
 ```bash
-oh-my-dm --headed
+oh-my-dm chat --headed
 oh-my-dm doctor
 oh-my-dm logout instagram
 ```
+
+### 처음 실행하기
+
+1. `oh-my-dm login instagram`을 실행하고 전용 Chromium 창에서 로그인한 뒤 터미널에서 `Ctrl+C`를 누릅니다.
+2. `oh-my-dm` 또는 짧은 별칭인 `dm`을 실행합니다.
+3. `/conversations`를 입력해 대화 목록을 엽니다.
+4. `Tab`, `←`, `→`로 Instagram과 카카오톡을 전환합니다. `↑`/`↓`로 대화방을 선택하고 `Enter`로 엽니다.
+5. 텍스트 메시지를 입력하고 `Enter`로 전송합니다. 원본 서비스에서 전송이 확인된 뒤 내 메시지로 표시됩니다.
+6. 입력창이 비어 있을 때 `↑` 또는 `PageUp`으로 history를 엽니다. History에서는 `↑`/`PageUp`으로 이전 메시지, `↓`/`PageDown`으로 최신 메시지를 탐색하고 `Esc`로 돌아갑니다.
+
+`Esc`는 메뉴와 history에서 이전 화면으로 돌아갑니다. 일반 채팅 화면에서는 oh-my-dm을 종료합니다. `/exit`와 `Ctrl+C`도 애플리케이션과 connector 프로세스를 함께 종료합니다.
+
+### 플랫폼 및 콘텐츠 지원
+
+| Connector | 지원 범위 | 참고 |
+| --- | --- | --- |
+| Instagram | macOS와 Linux에서 CI 검증 | 번들된 Playwright Chromium을 사용합니다. Windows는 아직 공식 검증되지 않았습니다. |
+| 카카오톡 | macOS 전용 | 데스크톱 카카오톡 앱 로그인과 손쉬운 사용 권한이 필요합니다. |
+
+텍스트 대화는 전체 내용을 표시합니다. 사진, 영상, 릴스, 게시물, 이모티콘, 공감, 답장, 수정, 삭제와 시스템 안내는 connector와 무관한 공통 메시지 타입으로 정규화하고, 원본 UI에서 확인할 수 있을 때 일관된 텍스트 표식으로 표시합니다. 공유 릴스는 Instagram이 제목을 제공하면 `제목(릴스)`, 제공하지 않으면 `(릴스)`로 표시합니다. 미디어 파일 자체는 다운로드하거나 렌더링하지 않으며, 원본 앱의 보이는 DOM이나 손쉬운 사용 트리에 노출되지 않은 콘텐츠는 생략될 수 있습니다.
+
+`/model`에서 선택하는 모델 이름과 effort는 workspace를 꾸미는 시각적 표기일 뿐입니다. 실제 AI 모델에 연결하거나 대화 내용을 AI provider로 전송하지 않으며 connector 동작에도 영향을 주지 않습니다.
+
+### 로컬 데이터 및 개인정보
+
+oh-my-dm은 메시지를 저장하지 않지만 동작을 위해 일부 로컬 상태가 필요합니다.
+
+- Instagram 전용 브라우저 프로필에는 로그인 cookie가 있으므로 민감한 정보로 취급해야 합니다.
+- UI 언어, 테마와 모델 표기 설정은 로컬에 저장됩니다.
+- `/clear`는 터미널 화면과 scrollback만 비우며 Instagram이나 카카오톡의 메시지를 삭제하지 않습니다.
+- `oh-my-dm logout instagram`은 Instagram 전용 브라우저 프로필을 삭제해 이 CLI에서 로그아웃합니다. 다른 브라우저의 로그인에는 영향을 주지 않습니다.
+
+`~/.oh-my-dm/browser`를 Git에 commit하거나 신뢰할 수 없는 위치에 공유·백업하지 마세요. 기존 로그인 세션을 잃지 않도록 이전 설치에서는 legacy 경로인 `~/.oh-my-chat`을 계속 사용할 수 있습니다.
 
 ### 언어
 
@@ -214,6 +310,34 @@ oh-my-dm logout instagram
 ```
 
 `/`로 시작하는 일반 메시지를 보내려면 `//message`처럼 slash를 두 번 입력하세요.
+
+`/open`은 대화방 이름이 하나로 특정되어야 합니다. 표시 이름이 같은 대화방이 여러 개라면 `/conversations`에서 올바른 행을 직접 선택하세요. `/unread`와 `/all`은 대화 목록 filter만 변경하며 원본 서비스의 읽음 상태는 바꾸지 않습니다.
+
+### 업데이트 및 제거
+
+```bash
+npm install --global oh-my-dm@latest
+oh-my-dm doctor
+```
+
+CLI를 제거하려면 필요에 따라 Instagram 세션을 먼저 삭제한 뒤 package를 제거하세요.
+
+```bash
+oh-my-dm logout instagram
+npm uninstall --global oh-my-dm
+```
+
+### 문제 해결
+
+| 증상 | 해결 방법 |
+| --- | --- |
+| `oh-my-dm`을 찾지 못하거나 같은 이름의 폴더로 이동함 | 전역으로 다시 설치하고 새 터미널을 열거나 zsh에서 `rehash`를 실행하세요. `command -v oh-my-dm`으로 확인할 수 있습니다. |
+| npm이 install script를 차단함 | `npm install --global --allow-scripts=oh-my-dm oh-my-dm`으로 다시 설치하세요. 이 script는 Ink를 patch하고 전용 Chromium을 다운로드합니다. |
+| Instagram 로그인이 필요하다고 나오거나 대화방이 나타나지 않음 | `oh-my-dm login instagram`을 다시 실행하세요. 세션이 손상됐다면 `oh-my-dm logout instagram` 후 다시 로그인하세요. |
+| Chromium을 찾을 수 없음 | `oh-my-dm doctor`로 확인한 뒤 install script를 허용해 다시 설치하세요. |
+| 카카오톡 연결·대화방 열기·전송이 되지 않음 | 앱 설치와 로그인을 확인하고, oh-my-dm을 실행하는 정확한 터미널 앱에 손쉬운 사용 권한을 부여한 뒤 카카오톡과 터미널을 모두 재시작하세요. |
+| Connector 내용이 갱신되지 않음 | `/refresh`를 실행하세요. Instagram이나 카카오톡 UI가 바뀐 경우에는 oh-my-dm 업데이트가 필요할 수 있습니다. |
+| 터미널이 좁거나 행이 잘림 | 터미널 창을 넓혀주세요. 반응형 layout을 사용하지만 매우 작은 터미널에서는 일부 hint와 preview를 표시할 수 없습니다. |
 
 ### 주의
 

@@ -4,12 +4,141 @@ import test from "node:test";
 import { chromium } from "playwright-core";
 
 import {
+  canonicalizeInstagramSenders,
   clickInstagramConversationRow,
+  inheritInstagramRawSenders,
   InstagramWebConnector,
   isTransientInstagramNavigationError,
   observeInstagramChanges,
   readInstagramMessageRows,
 } from "../src/connectors/instagram-web.js";
+
+test("답장 다음의 이름 없는 일반 메시지에는 답장 대상을 상속하지 않는다", () => {
+  const messages = inheritInstagramRawSenders([
+    { text: "택시비 시팣", sender: "polalmkhksohn_", senderSource: "display" },
+    {
+      text: "아니지",
+      sender: "polalmkhksohn_ replied to 임규현",
+      ariaLabel: "polalmkhksohn_ replied to 임규현",
+      senderSource: "display",
+    },
+    { text: "아니지", sender: null },
+    { text: "담배걸린거아니다", sender: null },
+  ]);
+
+  assert.deepEqual(messages.map((message) => ({
+    sender: message.sender,
+    ariaLabel: message.ariaLabel,
+  })), [
+    { sender: "polalmkhksohn_", ariaLabel: undefined },
+    {
+      sender: "polalmkhksohn_ replied to 임규현",
+      ariaLabel: "polalmkhksohn_ replied to 임규현",
+    },
+    { sender: "polalmkhksohn_", ariaLabel: undefined },
+    { sender: "polalmkhksohn_", ariaLabel: undefined },
+  ]);
+});
+
+test("프로필 ID를 같은 사람의 표시 이름으로 대화방 전체에서 통일한다", () => {
+  const aliases = new Map<string, string>();
+  const currentWindow = canonicalizeInstagramSenders([
+    {
+      text: "ㅈ박은줄 알았는데",
+      sender: "故추whw만함",
+      senderSource: "display",
+      senderIdentity: "zxngw0o님의 프로필 사진",
+    },
+    {
+      text: "국민대 가고싶습니다",
+      sender: "zxngw0o님의 프로필 사진",
+      senderSource: "profile",
+    },
+  ], aliases);
+
+  assert.equal(aliases.get("zxngw0o"), "故추whw만함");
+  assert.deepEqual(currentWindow.map((message) => message.sender), [
+    "故추whw만함",
+    "故추whw만함",
+  ]);
+
+  const olderWindow = canonicalizeInstagramSenders([
+    {
+      text: "여자 얼굴보고 욕하겟냐고",
+      sender: "zxngw0o님의 프로필 사진",
+      senderSource: "profile",
+    },
+  ], aliases);
+  assert.equal(olderWindow[0]?.sender, "故추whw만함");
+});
+
+test("표시 이름이 첫 bubble에 있고 프로필 ID가 마지막 bubble에 있어도 같은 발신자로 묶는다", () => {
+  const aliases = new Map<string, string>();
+  const messages = canonicalizeInstagramSenders([
+    {
+      text: "아이 내가 국민대를 갔는데",
+      sender: "故추whw만함",
+      senderSource: "display",
+    },
+    {
+      text: "여자 얼굴보고 욕하겟냐고 ㅅㅂ",
+      sender: "Open the profile page of zxngw0o",
+      senderSource: "profile",
+      senderIdentity: "zxngw0o",
+    },
+    {
+      text: "할것 같은데",
+      sender: "이정민",
+      senderSource: "display",
+    },
+  ], aliases);
+
+  assert.equal(aliases.get("zxngw0o"), "故추whw만함");
+  assert.deepEqual(messages.map((message) => message.sender), [
+    "故추whw만함",
+    "故추whw만함",
+    "이정민",
+  ]);
+});
+
+test("표시 이름과 계정 ID가 달라도 같은 프로필 링크를 기준으로 통일한다", async (t) => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent(`
+    <main>
+      <section>
+        <div class="message-group">
+          <div>故추whw만함</div>
+          <div role="row">
+            <img alt="故추whw만함님의 프로필 사진" />
+            <span>아이 내가 국민대를 갔는데</span>
+          </div>
+          <a href="/zxngw0o/">프로필 열기</a>
+        </div>
+        <div class="message-group">
+          <div role="row">
+            <a href="/zxngw0o/"><img alt="zxngw0o님의 프로필 사진" /></a>
+            <span>여자 얼굴보고 욕하겟냐고 ㅅㅂ</span>
+          </div>
+        </div>
+      </section>
+    </main>
+  `);
+
+  const raw = await page
+    .locator('main [role="row"]')
+    .evaluateAll(readInstagramMessageRows);
+  assert.deepEqual(raw.map((message) => message.senderIdentity), ["zxngw0o", "zxngw0o"]);
+
+  const aliases = new Map<string, string>();
+  const messages = canonicalizeInstagramSenders(raw, aliases);
+  assert.equal(aliases.get("zxngw0o"), "故추whw만함");
+  assert.deepEqual(messages.map((message) => message.sender), [
+    "故추whw만함",
+    "故추whw만함",
+  ]);
+});
 
 test("tsx로 실행해도 Instagram evaluateAll 콜백이 브라우저에서 독립적으로 동작한다", async (t) => {
   const browser = await chromium.launch({ headless: true });
@@ -97,6 +226,20 @@ test("Instagram 인라인 공유는 작성자 ID를 제목으로 쓰지 않고 �
         <div>임규현</div>
         <div role="row" class="normal-message"><span>일반 메시지</span></div>
       </section>
+      <section>
+        <div>서정현</div>
+        <div role="row" class="post-card"><a href="/post_author/">post_author</a></div>
+      </section>
+      <section>
+        <div>박가은</div>
+        <div role="row" class="photo-message"><img alt="Photo" /></div>
+      </section>
+      <section>
+        <div>hyeon_0627</div>
+        <div role="row" class="reply-message" aria-label="polalmkhksohn_ replied to hyeon_0627">
+          <span>집갔는데 문잠겨있다 이제</span>
+        </div>
+      </section>
     </main>
   `);
   await page.locator(".media-card").evaluate((element) => {
@@ -136,23 +279,169 @@ test("Instagram 인라인 공유는 작성자 ID를 제목으로 쓰지 않고 �
       },
     });
   });
+  await page.locator(".post-card").evaluate((element) => {
+    Object.defineProperty(element, "__reactFiber$test", {
+      enumerable: true,
+      value: {
+        memoizedProps: {
+          content_type: "MESSAGE_INLINE_SHARE",
+          targetUrl: "https://www.instagram.com/p/POST123/",
+        },
+      },
+    });
+  });
 
   const messages = await page
     .locator('main [role="row"]')
     .evaluateAll(readInstagramMessageRows);
 
   assert.equal(messages[0]?.sender, "故추whw만함");
+  assert.equal(messages[0]?.senderIdentity, "zxngw0o님의 프로필 사진");
   assert.equal(messages[0]?.text.trim(), "(릴스)");
   assert.equal(messages[0]?.kind, "reel");
   assert.equal(messages[1]?.sender, "박가은");
   assert.equal(messages[1]?.text.trim(), "축구 끝나고 집 가는 길(릴스)");
   assert.equal(messages[2]?.sender, "임규현");
   assert.equal(messages[2]?.text.trim(), "일반 메시지");
+  assert.equal(messages[3]?.sender, "서정현");
+  assert.equal(messages[3]?.text.trim(), "(게시물)");
+  assert.equal(messages[3]?.kind, "post");
+  assert.equal(messages[4]?.sender, "박가은");
+  assert.equal(messages[4]?.text.trim(), "사진을 보냈습니다.");
+  assert.equal(messages[4]?.kind, "image");
+  assert.equal(messages[5]?.sender, "polalmkhksohn_ replied to hyeon_0627");
+  assert.equal(messages[5]?.text.trim(), "집갔는데 문잠겨있다 이제");
+});
+
+test("프로필 사진은 Instagram 이미지 메시지로 오인하지 않는다", async (t) => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent(`
+    <main>
+      <section>
+        <div>임규현</div>
+        <div role="row"><img alt="임규현님의 프로필 사진" /><span>안녕하세요</span></div>
+      </section>
+    </main>
+  `);
+
+  const messages = await page
+    .locator('main [role="row"]')
+    .evaluateAll(readInstagramMessageRows);
+
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0]?.text.trim(), "안녕하세요");
+  assert.equal(messages[0]?.kind, undefined);
+});
+
+test("발신자 없는 연속 행은 그룹의 유일한 프로필 identity를 사용한다", async (t) => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent(`
+    <main>
+      <section>
+        <div role="row"><img alt="故추whw만함님의 프로필 사진" /><span>ㅈ박은줄 알았는데</span></div>
+        <div role="row"><span>최악정도는 아니네요</span></div>
+        <div role="row"><span>34343</span></div>
+        <div>이정민</div>
+        <div role="row" aria-label="이정민 replied to 故추whw만함"><span>34343</span></div>
+      </section>
+    </main>
+  `);
+
+  const messages = await page
+    .locator('main [role="row"]')
+    .evaluateAll(readInstagramMessageRows);
+
+  assert.equal(messages[0]?.sender, "故추whw만함님의 프로필 사진");
+  assert.equal(messages[1]?.sender, "故추whw만함님의 프로필 사진");
+  assert.equal(messages[2]?.sender, "故추whw만함님의 프로필 사진");
+  assert.equal(messages[3]?.sender, "이정민 replied to 故추whw만함");
+});
+
+test("답장 카드 안의 인용 row를 별도 메시지로 중복 파싱하지 않는다", async (t) => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent(`
+    <main>
+      <section>
+        <div role="row" class="original">
+          <img alt="zxngw0o님의 프로필 사진" />
+          <span>34343</span>
+        </div>
+        <div role="row" class="reply" aria-label="이정민 replied to 故추whw만함">
+          <div role="row" class="quoted-original"><span>34343</span></div>
+          <span>34343</span>
+        </div>
+      </section>
+    </main>
+  `);
+
+  const messages = await page
+    .locator('main [role="row"]')
+    .evaluateAll(readInstagramMessageRows);
+
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0]?.sender, "zxngw0o님의 프로필 사진");
+  assert.equal(messages[1]?.sender, "이정민 replied to 故추whw만함");
+});
+
+test("fallback 파서는 답장 카드의 버튼형 인용 원문을 별도 메시지로 만들지 않는다", async (t) => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1100, height: 780 } });
+  await page.setContent(`
+    <style>
+      main { margin-left: 500px; width: 500px; height: 600px; }
+      .bubble { width: 220px; min-height: 32px; border-radius: 12px; background: rgb(40, 40, 40); }
+    </style>
+    <main>
+      <div role="group">
+        <div>polalmkhksohn_ replied to 임규현</div>
+        <div role="button"><div class="bubble">집갔는데 문잠겨있다 이제</div></div>
+        <div class="bubble">아니지</div>
+      </div>
+      <div role="group"><div class="bubble">아니지</div></div>
+    </main>
+  `);
+
+  const connector = new InstagramWebConnector({ profileDir: "/tmp/unused-profile" });
+  const readVisibleMessages = (
+    connector as unknown as {
+      readVisibleMessages: (targetPage: typeof page, threadId: string) => Promise<Array<{
+        kind: string;
+        text: string;
+        replyTo?: { sender?: string; text?: string };
+      }>>;
+    }
+  ).readVisibleMessages.bind(connector);
+  const messages = await readVisibleMessages(page, "thread-1");
+
+  assert.deepEqual(messages.map(({ kind, text, replyTo }) => ({ kind, text, replyTo })), [
+    {
+      kind: "reply",
+      text: "아니지",
+      replyTo: { sender: "임규현", text: "집갔는데 문잠겨있다 이제" },
+    },
+    { kind: "text", text: "아니지", replyTo: undefined },
+  ]);
 });
 
 test("이전 메시지 DOM이 깨어나기 전에 older 병합 방향을 설정한다", async () => {
   const connector = new InstagramWebConnector({ profileDir: "/tmp/unused-profile" });
-  const internalState = connector as unknown as { loadingOlder: boolean };
+  const internalState = connector as unknown as {
+    loadingOlder: boolean;
+    readVisibleMessages: () => Promise<Array<{
+      id: string;
+      threadId: string;
+      kind: "text";
+      sender: string;
+      text: string;
+    }>>;
+  };
   let loadingOlderWhileScrolling = false;
   Object.assign(connector, {
     page: {
@@ -161,15 +450,97 @@ test("이전 메시지 DOM이 깨어나기 전에 older 병합 방향을 설정�
       locator: () => ({
         evaluate: async () => {
           loadingOlderWhileScrolling = internalState.loadingOlder;
-          return false;
+          return { moved: false, previousScrollTop: 0 };
         },
       }),
     },
   });
+  internalState.readVisibleMessages = async () => [{
+    id: "anchor",
+    threadId: "thread-1",
+    kind: "text",
+    sender: "A",
+    text: "anchor",
+  }];
 
   assert.equal(await connector.loadOlderMessages(), 0);
   assert.equal(loadingOlderWhileScrolling, true);
   assert.equal(internalState.loadingOlder, false);
+});
+
+test("과거 DOM으로 이동한 뒤의 자동 refresh도 older 방향을 유지한다", async () => {
+  const connector = new InstagramWebConnector({ profileDir: "/tmp/unused-profile" });
+  const internalState = connector as unknown as {
+    readingOlderWindow: boolean;
+    readVisibleMessages: () => Promise<Array<{
+      id: string;
+      threadId: string;
+      kind: "text";
+      sender: string;
+      text: string;
+    }>>;
+  };
+  Object.assign(connector, {
+    page: {
+      url: () => "https://www.instagram.com/direct/t/thread-1/",
+      waitForTimeout: async () => undefined,
+      locator: () => ({
+        evaluate: async () => ({ moved: true, previousScrollTop: 100 }),
+      }),
+    },
+  });
+  let readCount = 0;
+  internalState.readVisibleMessages = async () => {
+    readCount += 1;
+    const anchor = {
+      id: "anchor",
+      threadId: "thread-1",
+      kind: "text" as const,
+      sender: "A",
+      text: "anchor",
+    };
+    return readCount === 1
+      ? [anchor]
+      : [{ ...anchor, id: "older", text: "older" }, anchor];
+  };
+
+  await connector.loadOlderMessages();
+  assert.equal(internalState.readingOlderWindow, true);
+});
+
+test("이동 전후 anchor가 끊기면 과거 DOM을 history에 반영하지 않는다", async () => {
+  const connector = new InstagramWebConnector({ profileDir: "/tmp/unused-profile" });
+  const internalState = connector as unknown as {
+    readingOlderWindow: boolean;
+    readVisibleMessages: () => Promise<Array<{
+      id: string;
+      threadId: string;
+      kind: "text";
+      sender: string;
+      text: string;
+    }>>;
+  };
+  Object.assign(connector, {
+    page: {
+      url: () => "https://www.instagram.com/direct/t/thread-1/",
+      waitForTimeout: async () => undefined,
+      locator: () => ({
+        evaluate: async () => ({ moved: true, previousScrollTop: 100 }),
+      }),
+    },
+  });
+  let readCount = 0;
+  internalState.readVisibleMessages = async () => [{
+    id: `message-${readCount}`,
+    threadId: "thread-1",
+    kind: "text",
+    sender: "A",
+    text: readCount++ === 0 ? "known anchor" : "disconnected old row",
+  }];
+
+  assert.equal(await connector.loadOlderMessages(), 0);
+  assert.equal(internalState.readingOlderWindow, false);
+  assert.deepEqual(connector.getSnapshot().messages, []);
 });
 
 test("Instagram 화면 전환 중 사라진 execution context는 재시도 가능한 오류다", () => {
