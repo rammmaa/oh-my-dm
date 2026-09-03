@@ -238,13 +238,13 @@ export function mergeMessageWindows(
   // return only scattered anchor rows. Direction tells us which side owns all
   // genuinely new rows; occurrence-aware matching prevents repeated messages
   // with identical text from being collapsed.
-  return repairReplyQuoteSenders(
-    inheritGroupedSenders(
-      direction === "older"
-        ? [...matching.unmatched, ...anchoredExisting]
-        : [...anchoredExisting, ...matching.unmatched],
-    ),
+  const merged = mergeUnmatchedAroundAnchors(
+    anchoredExisting,
+    incoming,
+    matching.matches,
+    direction,
   );
+  return repairReplyQuoteSenders(inheritGroupedSenders(merged));
 }
 
 export function messageWindowsShareAnchor(
@@ -290,34 +290,119 @@ export function repairReplyQuoteSenders(messages: ChatMessage[]): ChatMessage[] 
 function matchIncomingMessages(
   existing: ChatMessage[],
   incoming: ChatMessage[],
-): { unmatched: ChatMessage[]; byExistingIndex: Map<number, ChatMessage> } {
-  const usedExisting = new Set<number>();
+): {
+  matches: Array<{ existingIndex: number; incomingIndex: number }>;
+  byExistingIndex: Map<number, ChatMessage>;
+} {
+  const rows = incoming.length + 1;
+  const columns = existing.length + 1;
+  const scores = Array.from({ length: rows }, () => new Int32Array(columns));
+
+  for (let incomingIndex = 1; incomingIndex < rows; incomingIndex += 1) {
+    for (let existingIndex = 1; existingIndex < columns; existingIndex += 1) {
+      const message = incoming[incomingIndex - 1]!;
+      const candidate = existing[existingIndex - 1]!;
+      let score = Math.max(
+        scores[incomingIndex - 1]![existingIndex]!,
+        scores[incomingIndex]![existingIndex - 1]!,
+      );
+      if (sameMessage(candidate, message)) {
+        score = Math.max(
+          score,
+          scores[incomingIndex - 1]![existingIndex - 1]! + 100 + messageMatchQuality(candidate, message),
+        );
+      }
+      scores[incomingIndex]![existingIndex] = score;
+    }
+  }
+
+  const matches: Array<{ existingIndex: number; incomingIndex: number }> = [];
+  let incomingIndex = incoming.length;
+  let existingIndex = existing.length;
+  while (incomingIndex > 0 && existingIndex > 0) {
+    const message = incoming[incomingIndex - 1]!;
+    const candidate = existing[existingIndex - 1]!;
+    const diagonalScore = sameMessage(candidate, message)
+      ? scores[incomingIndex - 1]![existingIndex - 1]! + 100 + messageMatchQuality(candidate, message)
+      : -1;
+    if (diagonalScore === scores[incomingIndex]![existingIndex]) {
+      matches.push({ existingIndex: existingIndex - 1, incomingIndex: incomingIndex - 1 });
+      incomingIndex -= 1;
+      existingIndex -= 1;
+    } else if (
+      scores[incomingIndex - 1]![existingIndex]! >=
+      scores[incomingIndex]![existingIndex - 1]!
+    ) {
+      incomingIndex -= 1;
+    } else {
+      existingIndex -= 1;
+    }
+  }
+  matches.reverse();
+
   const byExistingIndex = new Map<number, ChatMessage>();
-  const unmatched: ChatMessage[] = [];
-  for (const message of incoming) {
-    let matchIndex = -1;
-    let matchScore = -1;
-    for (let index = 0; index < existing.length; index += 1) {
-      const candidate = existing[index]!;
-      if (usedExisting.has(index) || !sameMessage(candidate, message)) continue;
-      const score =
-        (candidate.sender === message.sender ? 8 : 0) +
-        (candidate.kind === message.kind ? 4 : 0) +
-        (candidate.replyTo?.sender === message.replyTo?.sender ? 2 : 0) +
-        (candidate.timestamp && candidate.timestamp === message.timestamp ? 1 : 0);
-      if (score > matchScore) {
-        matchIndex = index;
-        matchScore = score;
+  for (const match of matches) {
+    byExistingIndex.set(match.existingIndex, incoming[match.incomingIndex]!);
+  }
+  return { matches, byExistingIndex };
+}
+
+function messageMatchQuality(candidate: ChatMessage, message: ChatMessage): number {
+  return (
+    (candidate.sender === message.sender ? 8 : 0) +
+    (candidate.kind === message.kind ? 4 : 0) +
+    (candidate.replyTo?.sender === message.replyTo?.sender ? 2 : 0) +
+    (candidate.timestamp && candidate.timestamp === message.timestamp ? 1 : 0)
+  );
+}
+
+function mergeUnmatchedAroundAnchors(
+  existing: ChatMessage[],
+  incoming: ChatMessage[],
+  matches: Array<{ existingIndex: number; incomingIndex: number }>,
+  direction: "older" | "newer",
+): ChatMessage[] {
+  if (matches.length === 0) {
+    return direction === "older" ? [...incoming, ...existing] : [...existing, ...incoming];
+  }
+
+  const matchedIncomingIndexes = new Set(matches.map((match) => match.incomingIndex));
+  const insertBefore = new Map<number, ChatMessage[]>();
+  const prepend: ChatMessage[] = [];
+  const append: ChatMessage[] = [];
+
+  for (let index = 0; index < incoming.length; index += 1) {
+    if (matchedIncomingIndexes.has(index)) continue;
+    const message = incoming[index]!;
+    let previousMatch: { existingIndex: number; incomingIndex: number } | undefined;
+    for (let matchIndex = matches.length - 1; matchIndex >= 0; matchIndex -= 1) {
+      if (matches[matchIndex]!.incomingIndex < index) {
+        previousMatch = matches[matchIndex];
+        break;
       }
     }
-    if (matchIndex < 0) {
-      unmatched.push(message);
-      continue;
+    const nextMatch = matches.find((match) => match.incomingIndex > index);
+
+    if (previousMatch && nextMatch) {
+      const items = insertBefore.get(nextMatch.existingIndex) ?? [];
+      items.push(message);
+      insertBefore.set(nextMatch.existingIndex, items);
+    } else if (direction === "older" || nextMatch) {
+      // Instagram sometimes exposes [recent anchors, older rows]. A trailing
+      // unmatched block during an older read therefore still belongs before
+      // the accepted history, while leading rows are ordinary older content.
+      prepend.push(message);
+    } else {
+      append.push(message);
     }
-    usedExisting.add(matchIndex);
-    byExistingIndex.set(matchIndex, message);
   }
-  return { unmatched, byExistingIndex };
+
+  const merged = [...prepend];
+  for (let index = 0; index < existing.length; index += 1) {
+    merged.push(...(insertBefore.get(index) ?? []), existing[index]!);
+  }
+  merged.push(...append);
+  return merged;
 }
 
 export function inheritGroupedSenders(messages: ChatMessage[]): ChatMessage[] {

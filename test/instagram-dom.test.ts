@@ -343,6 +343,43 @@ test("답장 메타데이터가 조회마다 달라도 같은 anchor로 병합�
   assert.deepEqual(merged[0]?.replyTo, { sender: "임규현" });
 });
 
+test("같은 본문의 일반 메시지와 답장을 anchor 사이의 실제 순서대로 병합한다", () => {
+  const base = { threadId: "group-1", sender: "polalmkhksohn_", timestamp: undefined };
+  const existing = [
+    { ...base, id: "taxi", kind: "text" as const, text: "택시비 시팣" },
+    { ...base, id: "plain", kind: "text" as const, text: "아니지" },
+    { ...base, id: "smoke", kind: "text" as const, text: "담배걸린거아니다" },
+    { ...base, id: "reel", kind: "reel" as const, text: "(릴스)" },
+  ];
+  const incoming = [
+    { ...base, id: "older", kind: "text" as const, sender: "이정민", text: "아이고" },
+    { ...base, id: "taxi-new", kind: "text" as const, text: "택시비 시팣" },
+    {
+      ...base,
+      id: "reply",
+      kind: "reply" as const,
+      text: "아니지",
+      replyTo: { sender: "임규현", text: "집갔는데 문잠겨있다 이제" },
+    },
+    { ...base, id: "plain-new", kind: "text" as const, text: "아니지" },
+    { ...base, id: "smoke-new", kind: "text" as const, text: "담배걸린거아니다" },
+    { ...base, id: "reel-new", kind: "reel" as const, text: "(릴스)" },
+  ];
+
+  const merged = mergeMessageWindows(existing, incoming, "older");
+  assert.deepEqual(
+    merged.map(({ kind, text }) => ({ kind, text })),
+    [
+      { kind: "text", text: "아이고" },
+      { kind: "text", text: "택시비 시팣" },
+      { kind: "reply", text: "아니지" },
+      { kind: "text", text: "아니지" },
+      { kind: "text", text: "담배걸린거아니다" },
+      { kind: "reel", text: "(릴스)" },
+    ],
+  );
+});
+
 test("현재 창과 같은 메시지는 기록에 중복 추가하지 않는다", () => {
   const message = (id: string) => ({
     id,

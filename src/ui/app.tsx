@@ -34,7 +34,7 @@ import {
   type DisplayModel,
   type ModelEffort,
 } from "./model.js";
-import { padToWidth, truncateToWidth } from "./text-layout.js";
+import { getConversationLayout, padToWidth, truncateToWidth } from "./text-layout.js";
 import { formatUserMessageLines } from "./user-message.js";
 import { ImeTextInput } from "./ime-text-input.js";
 import {
@@ -116,6 +116,7 @@ export function App({
   const conversationLoadInProgress = useRef(false);
   const historyAlternateScreen = useRef(false);
   const commandAlternateScreen = useRef(false);
+  const previousTerminalSize = useRef(terminalSize);
   const theme = getTheme(themeId);
   const displayModel = getDisplayModel(modelId);
   const displayModelLabel = formatDisplayModel(displayModel, modelEffort);
@@ -146,8 +147,9 @@ export function App({
       staticHeaderRows,
   );
   const visibleMessageCount = Math.max(1, mainHeight - 4);
-  const messageContentWidth = Math.max(20, terminalSize.columns - 2);
-  const conversationContentWidth = Math.max(24, terminalSize.columns - 6);
+  const messageContentWidth = Math.max(1, terminalSize.columns - 2);
+  const conversationLayout = getConversationLayout(terminalSize.columns);
+  const conversationContentWidth = conversationLayout.contentWidth;
   const transcriptRows = useMemo(
     () =>
       transcript.reduce((rows, item) => {
@@ -227,20 +229,18 @@ export function App({
     () => getSelectionWindow([...LANGUAGE_OPTIONS], languageIndex, Math.max(1, mainHeight - 4)),
     [languageIndex, mainHeight],
   );
-  const showConversationPreview = terminalSize.columns >= 70;
+  const showConversationPreview = conversationLayout.showPreview;
   const showComposerHints = terminalSize.columns >= 72;
-  const conversationTitleWidth = Math.max(
-    16,
-    Math.min(32, Math.floor(conversationContentWidth * 0.38)),
-  );
-  const conversationPreviewWidth = Math.max(
-    0,
-    conversationContentWidth - 4 - conversationTitleWidth - 1,
-  );
+  const useCompactConversationTabs = conversationLayout.compactTabs;
+  const conversationTabsWidth = conversationLayout.tabsWidth;
+  const conversationPathWidth = conversationLayout.pathWidth;
+  const conversationTitleWidth = conversationLayout.titleWidth;
+  const conversationPreviewWidth = conversationLayout.previewWidth;
   const conversationPathLabel = `~/conversations · ${conversationFilter}`;
   const conversationConnector = snapshot.connectors?.find(
     (item) => item.id === conversationProvider,
   );
+  const terminalTooSmall = terminalSize.columns < 24 || terminalSize.rows < 10;
 
   useEffect(() => {
     const onSnapshot = (next: ChatSnapshot) => {
@@ -284,6 +284,46 @@ export function App({
     },
     [stdout],
   );
+
+  useEffect(() => {
+    const previous = previousTerminalSize.current;
+    if (
+      previous.rows === terminalSize.rows &&
+      previous.columns === terminalSize.columns
+    ) {
+      return;
+    }
+    previousTerminalSize.current = terminalSize;
+
+    // Resize events arrive in bursts. Wait for the terminal to settle, then
+    // clear the complete frame before asking Ink for a full redraw. Ink's
+    // normal width-aware diff cannot erase characters that belonged to the
+    // previous, wider frame, leaving duplicate borders and footers behind.
+    const timer = setTimeout(() => {
+      void (async () => {
+        const suspension = await suspendTerminal();
+        const alternateScreen =
+          historyAlternateScreen.current || commandAlternateScreen.current;
+        stdout.write(alternateScreen ? "\u001B[2J\u001B[H" : "\u001B[2J\u001B[3J\u001B[H");
+        if (!alternateScreen) {
+          setTranscript((items) =>
+            items.map((item) =>
+              item.kind === "signature"
+                ? { ...item, full: terminalSize.columns >= 48 }
+                : item,
+            ),
+          );
+          setTranscriptEpoch((epoch) => epoch + 1);
+        }
+        await nextRenderTurn();
+        await suspension.resume();
+      })().catch((next) =>
+        setError(next instanceof Error ? next.message : String(next)),
+      );
+    }, 60);
+
+    return () => clearTimeout(timer);
+  }, [stdout, suspendTerminal, terminalSize.columns, terminalSize.rows]);
 
   useEffect(() => {
     setCommandIndex(0);
@@ -876,6 +916,14 @@ export function App({
     void connector.sendMessage(parsed.text).catch(showError);
   };
 
+  if (terminalTooSmall) {
+    return (
+      <Text color={theme.muted}>
+        {truncateToWidth("oh-my-dm · resize ≥24×10", terminalSize.columns)}
+      </Text>
+    );
+  }
+
   return (
     <>
       <Static key={transcriptEpoch} items={transcript}>
@@ -991,8 +1039,14 @@ export function App({
         ) : viewMode === "conversations" ? (
           <Box flexGrow={1} flexDirection="column" borderStyle="single" paddingX={1}>
             <Box>
-              <Text bold color={theme.path}>{conversationPathLabel}</Text>
-              <Box flexGrow={1} justifyContent="center">
+              {conversationPathWidth > 0 && (
+                <Box width={conversationPathWidth} flexShrink={0}>
+                  <Text bold color={theme.path} wrap="truncate-end">
+                    {truncateToWidth(conversationPathLabel, conversationPathWidth)}
+                  </Text>
+                </Box>
+              )}
+              <Box width={conversationTabsWidth} flexShrink={0} justifyContent="flex-end">
                 <Text
                   bold={conversationProvider === "instagram"}
                   color={conversationProvider === "instagram" ? "#000000" : theme.muted}
@@ -1002,7 +1056,7 @@ export function App({
                       : undefined
                   }
                 >
-                  {" Instagram "}
+                  {useCompactConversationTabs ? " I " : " Instagram "}
                 </Text>
                 <Text color={theme.muted}> │ </Text>
                 <Text
@@ -1014,10 +1068,9 @@ export function App({
                       : undefined
                   }
                 >
-                  {" KakaoTalk "}
+                  {useCompactConversationTabs ? " K " : " KakaoTalk "}
                 </Text>
               </Box>
-              <Box width={stringWidth(conversationPathLabel)} />
             </Box>
             {conversations.length === 0 ? (
               <Text color={theme.muted}>
