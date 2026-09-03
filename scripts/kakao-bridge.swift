@@ -126,7 +126,7 @@ final class KakaoAccessibility {
     if try windows().contains(where: { title(of: $0) == "카카오톡" }) { return }
     let previousApplication = NSWorkspace.shared.frontmostApplication
     let application = try runningApplication
-    application.activate(options: [.activateIgnoringOtherApps])
+    application.activate()
     let appElement = try applicationElement
     guard let menuBar = children(of: appElement).first(where: { role(of: $0) == kAXMenuBarRole as String }),
           let windowMenu = children(of: menuBar).first(where: { title(of: $0) == "창" }),
@@ -138,7 +138,7 @@ final class KakaoAccessibility {
     if result != .success { throw BridgeError.message("KakaoTalk 채팅 목록을 열지 못했습니다.") }
     usleep(500_000)
     if let previousApplication, previousApplication != application {
-      previousApplication.activate(options: [.activateIgnoringOtherApps])
+      previousApplication.activate()
     }
   }
 
@@ -211,7 +211,7 @@ final class KakaoAccessibility {
     guard let cellPosition = position(of: cell), let cellSize = size(of: cell) else {
       throw BridgeError.message("KakaoTalk 대화 행 좌표를 읽지 못했습니다.")
     }
-    kakaoApplication.activate(options: [.activateIgnoringOtherApps])
+    kakaoApplication.activate()
     try? setAttribute(mainWindow, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
     let raiseResult = AXUIElementPerformAction(mainWindow, kAXRaiseAction as CFString)
     if raiseResult != .success {
@@ -229,7 +229,7 @@ final class KakaoAccessibility {
     for _ in 0..<15 {
       if try windows().contains(where: { title(of: $0) == expectedTitle }) {
         if let previousApplication, previousApplication != kakaoApplication {
-          previousApplication.activate(options: [.activateIgnoringOtherApps])
+          previousApplication.activate()
         }
         return
       }
