@@ -24,6 +24,9 @@ export interface RawMessage {
   senderSource?: "display" | "profile";
   senderInferred?: boolean;
   senderIdentity?: string | null;
+  visualTop?: number;
+  visualBottom?: number;
+  visualLeft?: number;
 }
 
 export function threadIdFromHref(href: string): string | undefined {
@@ -201,6 +204,10 @@ export function normalizeMessage(
 export function normalizeSenderLabel(value?: string | null): string | undefined {
   const label = value?.replaceAll("\u00a0", " ").trim();
   if (!label) return undefined;
+  if (
+    /^(?:(?:19|20)\d{2}\.\s*)?\d{1,2}\.\s*\d{1,2}\.\s*(?:오전|오후)\s*\d{1,2}:\d{2}$/.test(label) ||
+    /^(?:오늘|어제)\s+(?:오전|오후)\s+\d{1,2}:\d{2}$/.test(label)
+  ) return undefined;
 
   const patterns = [
     /^(.+?)님의? 프로필 사진$/,

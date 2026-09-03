@@ -1,5 +1,7 @@
 # oh-my-dm
 
+![oh-my-dm terminal interface](docs/screenshot.png)
+
 [한국어](#한국어) · [English](#english)
 
 ## 한국어
@@ -12,22 +14,29 @@ oh-my-dm은 Agent CLI처럼 보이도록 만든 눈치 덜 보이는 TUI 메신�
 
 ### 빠른 시작
 
-Node.js 22 이상이 필요합니다. Instagram은 번들된 Playwright Chromium으로 작동하며, 카카오톡 연동은 현재 macOS와 데스크톱 카카오톡 앱이 필요합니다.
+Node.js 22 이상이 필요합니다. 설치 없이 최신 버전을 바로 실행할 수 있습니다.
 
 ```bash
-# CLI를 전역으로 설치
-npm install --global oh-my-dm
+# Instagram 최초 로그인
+npx oh-my-dm@latest login instagram
 
-# 전용 Chromium 창에서 Instagram에 한 번 로그인
-oh-my-dm login instagram
-
-# 어느 경로에서든 실행
-dm
+# 실행
+npx oh-my-dm@latest
 ```
 
-로그인을 마치면 `Ctrl+C`로 로그인 명령을 종료하세요. `dm`을 실행하고 `/conversations`를 입력한 뒤 `Tab` 또는 `←`/`→`로 Instagram과 카카오톡을 선택합니다. `↑`/`↓`로 대화방을 고르고 `Enter`로 연 다음, 메시지를 입력하고 다시 `Enter`를 누르면 전송됩니다.
+로그인을 마치면 `Ctrl+C`로 로그인 창을 닫으세요. 카카오톡은 별도 로그인 없이 실행 중인 macOS 앱에 연결됩니다.
 
-macOS에서 카카오톡을 사용하려면 `시스템 설정 → 개인정보 보호 및 보안 → 손쉬운 사용`에서 터미널 앱을 허용해야 합니다. npm이 설치 스크립트를 차단하면 번들 Chromium이 설치되도록 `npm install --global --allow-scripts=oh-my-dm oh-my-dm`을 사용하세요.
+### 사용법
+
+| 작업 | 입력 |
+| --- | --- |
+| 대화 목록 열기 | `/conversations` |
+| Connector 전환 | `Tab` 또는 `←`/`→` |
+| 대화 선택 및 열기 | `↑`/`↓`, `Enter` |
+| 메시지 전송 | 메시지 입력 후 `Enter` |
+| 이전 메시지 보기 | 빈 입력창에서 `↑` 또는 `PageUp` |
+| 명령 목록 열기 | `/` |
+| 종료 | `Esc`, `/exit` 또는 `Ctrl+C` |
 
 ### 왜 oh-my-dm인가요?
 
@@ -56,7 +65,7 @@ oh-my-dm은 Instagram 내부 WebSocket이나 MQTT payload를 해석하지 않습
 > [!NOTE]
 > 현대적인 Agent CLI의 인터페이스에서 영감을 받았지만 OpenAI, Anthropic 또는 OpenCode와 공식적으로 연관되거나 보증받은 프로젝트는 아닙니다. 주변 시선을 줄이기 위한 인터페이스이며 회사 정책이나 기기 모니터링을 우회하는 도구는 아닙니다.
 
-### 요구 사항 및 설정
+### 설치 및 설정
 
 Node.js 22 이상이 필요합니다. Instagram connector는 전용 Playwright Chromium을 설치해 사용하므로 기본 브라우저가 Safari, Chrome, Brave 또는 다른 브라우저여도 동일하게 작동합니다. 카카오톡은 macOS용 앱이 설치되어 있고 로그인되어 있어야 합니다.
 
@@ -91,17 +100,6 @@ oh-my-dm chat --headed
 oh-my-dm doctor
 oh-my-dm logout instagram
 ```
-
-### 처음 실행하기
-
-1. `oh-my-dm login instagram`을 실행하고 전용 Chromium 창에서 로그인한 뒤 터미널에서 `Ctrl+C`를 누릅니다.
-2. `oh-my-dm` 또는 짧은 별칭인 `dm`을 실행합니다.
-3. `/conversations`를 입력해 대화 목록을 엽니다.
-4. `Tab`, `←`, `→`로 Instagram과 카카오톡을 전환합니다. `↑`/`↓`로 대화방을 선택하고 `Enter`로 엽니다.
-5. 텍스트 메시지를 입력하고 `Enter`로 전송합니다. 원본 서비스에서 전송이 확인된 뒤 내 메시지로 표시됩니다.
-6. 입력창이 비어 있을 때 `↑` 또는 `PageUp`으로 history를 엽니다. History에서는 `↑`/`PageUp`으로 이전 메시지, `↓`/`PageDown`으로 최신 메시지를 탐색하고 `Esc`로 돌아갑니다.
-
-`Esc`는 메뉴와 history에서 이전 화면으로 돌아갑니다. 일반 채팅 화면에서는 oh-my-dm을 종료합니다. `/exit`와 `Ctrl+C`도 애플리케이션과 connector 프로세스를 함께 종료합니다.
 
 ### 플랫폼 및 콘텐츠 지원
 
@@ -203,22 +201,29 @@ The main goal is simple: let you check and send DMs more privately in shared off
 
 ### Quick start
 
-Requires Node.js 22 or later. Instagram works through the bundled Playwright Chromium; KakaoTalk integration currently requires macOS and the desktop KakaoTalk app.
+Requires Node.js 22 or later. Run the latest version directly without a global installation.
 
 ```bash
-# Install the CLI globally
-npm install --global oh-my-dm
+# First-time Instagram login
+npx oh-my-dm@latest login instagram
 
-# Sign in to Instagram once in the dedicated Chromium window
-oh-my-dm login instagram
-
-# Launch from any directory
-dm
+# Launch
+npx oh-my-dm@latest
 ```
 
-After signing in, press `Ctrl+C` to close the login command. Launch `dm`, type `/conversations`, choose Instagram or KakaoTalk with `Tab` or `←`/`→`, select a conversation with `↑`/`↓`, and press `Enter` to open it. Type a message and press `Enter` again to send.
+After signing in, press `Ctrl+C` to close the login window. KakaoTalk connects to the running macOS app without a separate oh-my-dm login.
 
-On macOS, KakaoTalk users must also grant Accessibility permission to their terminal under `System Settings → Privacy & Security → Accessibility`. If npm blocks the install script, use `npm install --global --allow-scripts=oh-my-dm oh-my-dm` so the bundled Chromium can be installed.
+### Usage
+
+| Action | Input |
+| --- | --- |
+| Open conversations | `/conversations` |
+| Switch connectors | `Tab` or `←`/`→` |
+| Select and open a conversation | `↑`/`↓`, `Enter` |
+| Send a message | Type a message, then `Enter` |
+| View older messages | `↑` or `PageUp` with an empty composer |
+| Open command palette | `/` |
+| Exit | `Esc`, `/exit`, or `Ctrl+C` |
 
 ### Why oh-my-dm?
 
@@ -248,7 +253,7 @@ oh-my-dm does not decode Instagram's internal WebSocket or MQTT payloads. Incomi
 > [!NOTE]
 > The interface is inspired by modern Agent CLI tools, but oh-my-dm is not affiliated with or endorsed by OpenAI, Anthropic, or OpenCode. It is a privacy-oriented interface, not a tool for bypassing workplace policies or device monitoring.
 
-### Requirements and setup
+### Installation and setup
 
 Node.js 22 or later is required. The Instagram connector installs and uses its own Playwright Chromium, so it works independently of whether your default browser is Safari, Chrome, Brave, or another browser. KakaoTalk additionally requires macOS with KakaoTalk installed and signed in.
 
@@ -283,17 +288,6 @@ oh-my-dm chat --headed
 oh-my-dm doctor
 oh-my-dm logout instagram
 ```
-
-### First run
-
-1. Run `oh-my-dm login instagram`, sign in in the dedicated Chromium window, then press `Ctrl+C` in the terminal.
-2. Run `oh-my-dm` or its short alias, `dm`.
-3. Type `/conversations` to open the conversation list.
-4. Use `Tab`, `←`, or `→` to switch between Instagram and KakaoTalk. Use `↑`/`↓` to select a conversation and `Enter` to open it.
-5. Type a text message and press `Enter` to send it. Sending is confirmed by the original service before it appears as your message.
-6. With an empty composer, press `↑` or `PageUp` to open history. In history, use `↑`/`PageUp` for older messages, `↓`/`PageDown` for newer messages, and `Esc` to return.
-
-`Esc` returns from menus and history. In the normal chat view it exits oh-my-dm. `/exit` and `Ctrl+C` also close the application and its connector processes.
 
 ### Platform and content support
 

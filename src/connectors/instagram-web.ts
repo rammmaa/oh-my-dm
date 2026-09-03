@@ -102,7 +102,7 @@ export function clickInstagramConversationRow(
     if (!previewLead) return true;
     const text = (element.textContent ?? "").replaceAll("\u00a0", " ");
     return text.includes(previewLead);
-  }) ?? (titleMatches.length === 1 ? titleMatches[0] : rows[target.index]);
+  }) ?? (titleMatches.length === 1 ? titleMatches[0] : undefined);
   if (!(matched instanceof HTMLElement)) throw new Error("대화 행을 찾지 못했습니다.");
   matched.click();
 }
@@ -116,6 +116,7 @@ export function readInstagramMessageRows(elements: Element[]): RawMessage[] {
   return messageElements
     .map((element) => {
       const node = element as HTMLElement;
+      const rect = node.getBoundingClientRect();
       const text = node.innerText ?? "";
       const semanticLabels = [
         node.getAttribute("aria-label"),
@@ -408,6 +409,9 @@ export function readInstagramMessageRows(elements: Element[]): RawMessage[] {
         ...(!isReel && !isPost && detectedMediaKind ? { kind: detectedMediaKind } : {}),
         ...(senderSource ? { senderSource } : {}),
         ...(senderIdentity ? { senderIdentity } : {}),
+        visualTop: rect.top,
+        visualBottom: rect.bottom,
+        visualLeft: rect.left,
       };
     })
     .filter((item) => item.text.trim().length > 0);
@@ -416,6 +420,44 @@ export function readInstagramMessageRows(elements: Element[]): RawMessage[] {
 export interface InstagramWebOptions {
   profileDir: string;
   headless?: boolean;
+}
+
+export interface InstagramDirectThreadIdentity {
+  displayName: string;
+  username: string;
+}
+
+// A direct-message header links the participant's display name and username
+// to their profile. Group headers are buttons rather than profile links, so
+// requiring this exact visible structure prevents a room title from becoming
+// a sender name.
+export function readInstagramDirectThreadIdentity(
+  main: Element,
+): InstagramDirectThreadIdentity | null {
+  const profileLinks = [...main.querySelectorAll<HTMLAnchorElement>('a[href]')]
+    .filter((link) => {
+      const rect = link.getBoundingClientRect();
+      return (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        rect.top >= 0 &&
+        rect.bottom <= 100 &&
+        /^\/[^/?#]+\/?(?:\?.*)?$/.test(link.getAttribute("href") ?? "") &&
+        Boolean(link.querySelector("h2"))
+      );
+    });
+  if (profileLinks.length !== 1) return null;
+
+  const link = profileLinks[0]!;
+  const username = link.getAttribute("href")?.match(/^\/([^/?#]+)/)?.[1]?.trim();
+  const headerName = link.querySelector("h2")?.textContent
+    ?.replaceAll("\u00a0", " ")
+    .trim();
+  if (!username || !headerName) return null;
+
+  const displayName = headerName.replace(/님$/, "").trim();
+  if (!displayName || displayName === username) return null;
+  return { displayName, username };
 }
 
 export function canonicalizeInstagramSenders(
@@ -465,8 +507,28 @@ export function canonicalizeInstagramSenders(
 }
 
 export function inheritInstagramRawSenders(rawMessages: RawMessage[]): RawMessage[] {
+  const resolved = rawMessages.map((raw) => ({ ...raw }));
+  for (let index = resolved.length - 2; index >= 0; index -= 1) {
+    const current = resolved[index]!;
+    const next = resolved[index + 1]!;
+    const currentSender = normalizeSenderLabel(current.sender);
+    const nextSender = normalizeSenderLabel(next.sender);
+    if (
+      (!currentSender || currentSender === "unknown") &&
+      nextSender &&
+      nextSender !== "unknown" &&
+      nextSender !== "나" &&
+      isSameVisualSenderRun(current, next)
+    ) {
+      current.sender = nextSender;
+      current.senderSource = next.senderSource;
+      current.senderIdentity = next.senderIdentity;
+      current.senderInferred = true;
+    }
+  }
+
   let lastExternalSender: string | undefined;
-  return rawMessages.map((raw) => {
+  return resolved.map((raw) => {
     const normalizedSender = normalizeSenderLabel(raw.sender);
     if (normalizedSender === "나") {
       lastExternalSender = undefined;
@@ -475,18 +537,32 @@ export function inheritInstagramRawSenders(rawMessages: RawMessage[]): RawMessag
     if (raw.kind === "reel" && raw.senderSource === "profile" && lastExternalSender) {
       return { ...raw, sender: lastExternalSender, senderInferred: true };
     }
-    if (raw.sender && raw.sender !== "unknown") {
+    if (normalizedSender && normalizedSender !== "unknown") {
       // Keep the full reply label on this row so normalizeMessage can create
       // replyTo metadata, but only carry the actual sender name into following
       // unlabeled bubbles. Otherwise one reply turns the rest of the sender
       // run into replies as well.
-      lastExternalSender = normalizedSender ?? raw.sender;
+      lastExternalSender = normalizedSender;
       return raw;
     }
     return lastExternalSender
       ? { ...raw, sender: lastExternalSender, senderInferred: true }
       : raw;
   });
+}
+
+function isSameVisualSenderRun(current: RawMessage, next: RawMessage): boolean {
+  if (
+    current.visualBottom === undefined ||
+    current.visualLeft === undefined ||
+    next.visualTop === undefined ||
+    next.visualLeft === undefined
+  ) {
+    return false;
+  }
+  const verticalGap = next.visualTop - current.visualBottom;
+  return verticalGap >= -2 && verticalGap <= 12 &&
+    Math.abs(next.visualLeft - current.visualLeft) <= 8;
 }
 
 export class InstagramWebConnector extends EventEmitter implements ChatConnector {
@@ -698,6 +774,26 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
     this.activeConversationOverride = id;
 
     if (conversation.href.startsWith("button:")) {
+      const stableThreadId = conversation.identity?.match(/^thread:(\d+)$/)?.[1];
+      if (stableThreadId) {
+        try {
+          await page.goto(`https://www.instagram.com/direct/t/${stableThreadId}/`, {
+            waitUntil: "domcontentloaded",
+          });
+          // A hard route reaches the correct thread immediately, but Instagram
+          // hydrates its message DOM later. Do not publish an empty/stale
+          // snapshot during that gap.
+          for (let attempt = 0; attempt < 15; attempt += 1) {
+            if ((await this.readVisibleMessages(page, stableThreadId)).length > 0) break;
+            await page.waitForTimeout(200);
+          }
+          await this.refreshAfterConversationOpen(page);
+        } catch (error) {
+          this.activeConversationOverride = previousOverride;
+          throw error;
+        }
+        return;
+      }
       const index = Number(conversation.href.slice("button:".length));
       try {
         await page.locator(THREAD_ROW_SELECTOR).evaluateAll(clickInstagramConversationRow, {
@@ -995,6 +1091,10 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
   }
 
   private async readVisibleMessages(page: Page, threadId: string): Promise<ChatMessage[]> {
+    const directThreadIdentity = await page
+      .locator("main")
+      .evaluate(readInstagramDirectThreadIdentity)
+      .catch(() => null);
     let rawMessages = await page
       .locator('main [role="row"], main [role="listitem"]')
       .evaluateAll(readInstagramMessageRows);
@@ -1308,6 +1408,9 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
               ...(!isReel && !isPost && detectedMediaKind ? { kind: detectedMediaKind } : {}),
               ...(senderSource ? { senderSource } : {}),
               ...(senderIdentity ? { senderIdentity } : {}),
+              visualTop: rect.top,
+              visualBottom: rect.bottom,
+              visualLeft: rect.left,
             }];
           });
       });
@@ -1315,6 +1418,9 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
 
     const aliases = this.senderAliases.get(threadId) ?? new Map<string, string>();
     this.senderAliases.set(threadId, aliases);
+    if (directThreadIdentity) {
+      aliases.set(directThreadIdentity.username, directThreadIdentity.displayName);
+    }
     rawMessages = canonicalizeInstagramSenders(rawMessages, aliases);
     const storedMessages = this.messageHistory.get(threadId);
     if (storedMessages) {

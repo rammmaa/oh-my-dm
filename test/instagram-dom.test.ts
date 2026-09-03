@@ -207,6 +207,8 @@ test("Instagram 프로필과 메시지 라벨에서 발신자 이름만 추출�
   assert.equal(normalizeSenderLabel("이정민 replied to you"), "이정민");
   assert.equal(normalizeSenderLabel("이정민 replied to 故추whw만함"), "이정민");
   assert.equal(normalizeSenderLabel("이정민님이 故추whw만함님에게 보낸 답장"), "이정민");
+  assert.equal(normalizeSenderLabel("2026. 8. 25. 오전 11:15"), undefined);
+  assert.equal(normalizeSenderLabel("어제 오후 9:19"), undefined);
 });
 
 test("프로필 이미지 라벨을 정규화해 메시지 발신자로 사용한다", () => {

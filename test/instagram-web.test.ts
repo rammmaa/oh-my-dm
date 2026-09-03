@@ -10,8 +10,40 @@ import {
   InstagramWebConnector,
   isTransientInstagramNavigationError,
   observeInstagramChanges,
+  readInstagramDirectThreadIdentity,
   readInstagramMessageRows,
 } from "../src/connectors/instagram-web.js";
+
+test("1:1 대화 헤더의 프로필 링크에서 표시 이름과 계정 ID를 연결한다", async (t) => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1100, height: 780 } });
+  await page.setContent(`
+    <main>
+      <a href="/wo.ghks2/" style="display:block;width:160px;height:44px">
+        <h2>재환님</h2><span>wo.ghks2</span>
+      </a>
+    </main>
+  `);
+
+  const identity = await page.locator("main").evaluate(readInstagramDirectThreadIdentity);
+  assert.deepEqual(identity, { displayName: "재환", username: "wo.ghks2" });
+});
+
+test("그룹 대화 제목은 참여자 별칭으로 사용하지 않는다", async (t) => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1100, height: 780 } });
+  await page.setContent(`
+    <main>
+      <div role="button" style="width:220px;height:44px"><h2>12.24 민주화폭동</h2></div>
+      <a href="/member_one/" style="display:none"><h2>멤버 한 명</h2></a>
+    </main>
+  `);
+
+  const identity = await page.locator("main").evaluate(readInstagramDirectThreadIdentity);
+  assert.equal(identity, null);
+});
 
 test("답장 다음의 이름 없는 일반 메시지에는 답장 대상을 상속하지 않는다", () => {
   const messages = inheritInstagramRawSenders([
@@ -38,6 +70,52 @@ test("답장 다음의 이름 없는 일반 메시지에는 답장 대상을 상
     { sender: "polalmkhksohn_", ariaLabel: undefined },
     { sender: "polalmkhksohn_", ariaLabel: undefined },
   ]);
+});
+
+test("연속된 왼쪽 버블의 마지막 프로필 이름을 앞선 unlabeled 버블에 적용한다", () => {
+  const messages = inheritInstagramRawSenders([
+    {
+      text: "내일 정리 끝내면 언제가 될진 모르겠는데",
+      sender: "unknown",
+      visualTop: 171,
+      visualBottom: 211,
+      visualLeft: 486,
+    },
+    {
+      text: "시간되면 감",
+      sender: "wo.ghks2",
+      senderSource: "profile",
+      senderIdentity: "wo.ghks2",
+      visualTop: 213,
+      visualBottom: 253,
+      visualLeft: 486,
+    },
+  ]);
+
+  assert.equal(messages[0]?.sender, "wo.ghks2");
+  assert.equal(messages[0]?.senderInferred, true);
+  assert.equal(messages[0]?.senderIdentity, "wo.ghks2");
+});
+
+test("멀리 떨어지거나 정렬이 다른 다음 버블의 이름은 거꾸로 상속하지 않는다", () => {
+  const messages = inheritInstagramRawSenders([
+    {
+      text: "이름 없는 메시지",
+      sender: "unknown",
+      visualTop: 100,
+      visualBottom: 136,
+      visualLeft: 486,
+    },
+    {
+      text: "다른 메시지",
+      sender: "someone_else",
+      visualTop: 170,
+      visualBottom: 206,
+      visualLeft: 520,
+    },
+  ]);
+
+  assert.equal(messages[0]?.sender, "unknown");
 });
 
 test("프로필 ID를 같은 사람의 표시 이름으로 대화방 전체에서 통일한다", () => {
@@ -179,6 +257,76 @@ test("tsx로 실행해도 Instagram evaluateAll 콜백이 브라우저에서 독
 
   assert.equal(await rows.nth(0).getAttribute("data-clicked"), null);
   assert.equal(await rows.nth(1).getAttribute("data-clicked"), "true");
+});
+
+test("대화 제목이 현재 가상화 창에 없으면 다른 위치의 행을 대신 클릭하지 않는다", async (t) => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent(`
+    <main><nav role="navigation">
+      <div role="button" style="width:400px;height:60px"><span>태희님</span><span>좋다</span></div>
+    </nav></main>
+  `);
+  const row = page.locator('main [role="navigation"] [role="button"]');
+  await row.evaluate((element) => {
+    element.addEventListener("click", () => element.setAttribute("data-clicked", "true"));
+  });
+
+  await assert.rejects(
+    page.locator('main [role="navigation"] [role="button"]').evaluateAll(
+      clickInstagramConversationRow,
+      { index: 0, title: "12.24 민주화폭동" },
+    ),
+    /대화 행을 찾지 못했습니다/,
+  );
+  assert.equal(await row.getAttribute("data-clicked"), null);
+});
+
+test("안정적인 thread identity가 있으면 가상화된 행 대신 정확한 URL을 연다", async () => {
+  const connector = new InstagramWebConnector({ profileDir: "/tmp/unused-profile" });
+  const visited: string[] = [];
+  const internal = connector as unknown as {
+    page: {
+      url: () => string;
+      goto: (url: string) => Promise<void>;
+      waitForTimeout: () => Promise<void>;
+    };
+    snapshot: {
+      state: "connected";
+      conversations: Array<{
+        id: string;
+        href: string;
+        identity: string;
+        title: string;
+        unread: boolean;
+      }>;
+      messages: [];
+    };
+    readVisibleMessages: () => Promise<Array<{ id: string }>>;
+    refreshAfterConversationOpen: () => Promise<void>;
+  };
+  internal.page = {
+    url: () => "https://www.instagram.com/direct/t/old-thread/",
+    goto: async (url) => { visited.push(url); },
+    waitForTimeout: async () => undefined,
+  };
+  internal.snapshot = {
+    state: "connected",
+    conversations: [{
+      id: "button-thread:target",
+      href: "button:0",
+      identity: "thread:7019441201435662",
+      title: "12.24 민주화폭동",
+      unread: false,
+    }],
+    messages: [],
+  };
+  internal.readVisibleMessages = async () => [{ id: "ready" }];
+  internal.refreshAfterConversationOpen = async () => undefined;
+
+  await connector.openConversation("button-thread:target");
+  assert.deepEqual(visited, ["https://www.instagram.com/direct/t/7019441201435662/"]);
 });
 
 test("tsx로 실행해도 Instagram init script가 DOM 변경을 감지한다", async (t) => {
