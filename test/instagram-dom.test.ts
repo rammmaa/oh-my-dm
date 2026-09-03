@@ -174,6 +174,8 @@ test("Instagram 프로필과 메시지 라벨에서 발신자 이름만 추출�
   assert.equal(normalizeSenderLabel("Open the profile page of x0gu.s_board"), "x0gu.s_board");
   assert.equal(normalizeSenderLabel("김태현님의 프로필 페이지 열기"), "김태현");
   assert.equal(normalizeSenderLabel("이정민 replied to you"), "이정민");
+  assert.equal(normalizeSenderLabel("이정민 replied to 故추whw만함"), "이정민");
+  assert.equal(normalizeSenderLabel("이정민님이 故추whw만함님에게 보낸 답장"), "이정민");
 });
 
 test("프로필 이미지 라벨을 정규화해 메시지 발신자로 사용한다", () => {

@@ -28,6 +28,254 @@ const INBOX_URL = "https://www.instagram.com/direct/inbox/";
 const THREAD_LIST_SELECTOR = 'main [role="navigation"]';
 const THREAD_ROW_SELECTOR = `${THREAD_LIST_SELECTOR} [role="button"]`;
 
+interface ConversationRowTarget {
+  index: number;
+  title: string;
+  preview?: string;
+  identity?: string;
+}
+
+// Keep this as a top-level, self-contained browser callback. Functions created
+// inside evaluateAll callbacks can be rewritten by tsx/esbuild to call its
+// module-scoped __name helper, which does not exist in the browser context.
+export function clickInstagramConversationRow(
+  elements: Element[],
+  target: ConversationRowTarget,
+): void {
+  const rows = elements.filter((element) => {
+    const rect = element.getBoundingClientRect();
+    const parts = [...new Set(
+      [...element.querySelectorAll("span")]
+        .map((part) => part.textContent?.replaceAll("\u00a0", " ").trim())
+        .filter((part): part is string => Boolean(part)),
+    )];
+    const text = parts.length >= 2
+      ? parts.join("\n")
+      : (element as HTMLElement).innerText.trim();
+    return (
+      text.length > 0 &&
+      rect.x < 500 &&
+      rect.width > 300 &&
+      rect.height >= 48 &&
+      rect.height <= 110
+    );
+  });
+  const normalizedTitle = target.title.replaceAll("\u00a0", " ").trim();
+  const previewLead = target.preview
+    ?.replaceAll("\u00a0", " ")
+    .split(" · ")[0]
+    ?.trim();
+  const titleMatches = rows.filter((element) => {
+    const parts = [...new Set(
+      [...element.querySelectorAll("span")]
+        .map((part) => part.textContent?.replaceAll("\u00a0", " ").trim())
+        .filter((part): part is string => Boolean(part)),
+    )];
+    return parts[0] === normalizedTitle;
+  });
+  let identityMatch: Element | undefined;
+  if (target.identity) {
+    for (const element of titleMatches) {
+      const fiberKey = Object.keys(element).find((key) => key.startsWith("__reactFiber$"));
+      let fiber = fiberKey
+        ? (element as unknown as Record<string, {
+            memoizedProps?: Record<string, unknown>;
+            return?: unknown;
+          }>)[fiberKey]
+        : undefined;
+      for (let depth = 0; fiber && depth < 12; depth += 1) {
+        const props = fiber.memoizedProps;
+        const threadKey = props?.threadKeyForSelection ?? props?.threadFbidForSelection;
+        if (`thread:${String(threadKey)}` === target.identity) {
+          identityMatch = element;
+          break;
+        }
+        fiber = fiber.return as typeof fiber;
+      }
+      if (identityMatch) break;
+    }
+  }
+  const matched = identityMatch ?? titleMatches.find((element) => {
+    if (!previewLead) return true;
+    const text = (element.textContent ?? "").replaceAll("\u00a0", " ");
+    return text.includes(previewLead);
+  }) ?? (titleMatches.length === 1 ? titleMatches[0] : rows[target.index]);
+  if (!(matched instanceof HTMLElement)) throw new Error("대화 행을 찾지 못했습니다.");
+  matched.click();
+}
+
+export function readInstagramMessageRows(elements: Element[]): RawMessage[] {
+  return elements
+    .map((element) => {
+      const node = element as HTMLElement;
+      const text = node.innerText ?? "";
+      const containers: HTMLElement[] = [];
+      let container: HTMLElement | null = node;
+      for (let depth = 0; depth < 10 && container; depth += 1) {
+        containers.push(container);
+        container = container.parentElement;
+      }
+
+      const reelLink = node.matches('a[href*="/reel/"]')
+        ? node
+        : node.closest<HTMLElement>('a[href*="/reel/"]') ??
+          node.querySelector<HTMLElement>('a[href*="/reel/"]');
+      let inlineShare = false;
+      let sharedTargetUrl = "";
+      const fiberContainers = [
+        node,
+        ...node.querySelectorAll<HTMLElement>("*"),
+      ].slice(0, 100);
+      for (const candidateContainer of fiberContainers) {
+        const fiberKey = Object.keys(candidateContainer).find((key) =>
+          key.startsWith("__reactFiber$") || key.startsWith("__reactProps$"),
+        );
+        if (!fiberKey) continue;
+        const root = (candidateContainer as unknown as Record<string, unknown>)[fiberKey];
+        const fiberQueue: Array<{ value: unknown; depth: number }> = [
+          { value: root, depth: 0 },
+        ];
+        const visitedFibers = new WeakSet<object>();
+        for (let fiberIndex = 0; fiberIndex < fiberQueue.length && fiberIndex < 60; fiberIndex += 1) {
+          const fiberEntry = fiberQueue[fiberIndex]!;
+          const fiberValue = fiberEntry.value;
+          if (!fiberValue || typeof fiberValue !== "object" || visitedFibers.has(fiberValue)) continue;
+          visitedFibers.add(fiberValue);
+          const fiber = fiberValue as Record<string, unknown>;
+          const propsQueue: Array<{ value: unknown; depth: number }> = [
+            { value: fiber.memoizedProps, depth: 0 },
+            { value: fiber.pendingProps, depth: 0 },
+          ];
+          const visitedProps = new WeakSet<object>();
+          for (let propIndex = 0; propIndex < propsQueue.length && propIndex < 120; propIndex += 1) {
+            const entry = propsQueue[propIndex]!;
+            if (!entry.value || typeof entry.value !== "object" || visitedProps.has(entry.value)) continue;
+            try {
+              if (entry.value instanceof Node || entry.value instanceof Window) continue;
+            } catch {
+              continue;
+            }
+            visitedProps.add(entry.value);
+            const record = entry.value as Record<string, unknown>;
+            try {
+              if (record.content_type === "MESSAGE_INLINE_SHARE") inlineShare = true;
+              if (typeof record.targetUrl === "string") sharedTargetUrl = record.targetUrl;
+            } catch {
+              continue;
+            }
+            if (entry.depth >= 4) continue;
+            try {
+              for (const value of Object.values(record)) {
+                if (
+                  value &&
+                  typeof value === "object" &&
+                  !(value instanceof Node) &&
+                  !(value instanceof Window)
+                ) {
+                  propsQueue.push({ value, depth: entry.depth + 1 });
+                }
+              }
+            } catch {
+              continue;
+            }
+          }
+          if (fiberEntry.depth < 5 && fiber.child) {
+            fiberQueue.push({ value: fiber.child, depth: fiberEntry.depth + 1 });
+          }
+          // The root fiber's sibling belongs to the next DOM message. Only
+          // inspect siblings below the current card's own child tree.
+          if (fiberEntry.depth > 0 && fiber.sibling) {
+            fiberQueue.push({ value: fiber.sibling, depth: fiberEntry.depth });
+          }
+          if (inlineShare && sharedTargetUrl) break;
+        }
+        if (inlineShare && sharedTargetUrl) break;
+      }
+      const isReel = Boolean(
+        reelLink ||
+        (inlineShare && (
+          /instagram\.com\/reel\//i.test(sharedTargetUrl) ||
+          /instagram\.com\/p\//i.test(sharedTargetUrl) &&
+            /(?:carousel_share_child_media_id|is_ineligible_for_clips_chaining=false)/i.test(sharedTargetUrl)
+        )),
+      );
+      const reelTitle = isReel && reelLink
+        ? [
+            reelLink.getAttribute("aria-label"),
+            reelLink.getAttribute("title"),
+          ]
+            .map((candidate) => candidate?.replaceAll("\u00a0", " ").trim())
+            .find((candidate): candidate is string => Boolean(
+              candidate &&
+              candidate.length <= 240 &&
+              !/^[a-z0-9._]+$/i.test(candidate) &&
+              !/^(?:릴스|reel|reels|watch reel|original audio)$/i.test(candidate) &&
+              !/(?:님의 릴스|(?:'s|’s) reel|reel by .+)$/i.test(candidate),
+            ))
+        : undefined;
+      const displayText = isReel
+        ? reelTitle
+          ? `${reelTitle.replace(/\s*\(릴스\)$/, "")}(릴스)`
+          : "(릴스)"
+        : text;
+      const ownLabel = element.getAttribute("aria-label");
+      let sender: string | null = null;
+      let senderSource: "display" | "profile" | undefined;
+
+      // Instagram can expose the account ID in an avatar label while showing
+      // the user's chosen display name above the same message group. Search
+      // every visible ancestor first so one person is not rendered under two
+      // names within a consecutive group.
+      for (const candidateContainer of containers) {
+        const lines = [...new Set(
+          candidateContainer.innerText
+            .split("\n")
+            .map((line) => line.trim())
+            .filter(Boolean),
+        )];
+        if (lines.length >= 2 && lines[0] !== text.trim() && lines[0]!.length <= 80) {
+          sender = lines[0]!;
+          senderSource = "display";
+          break;
+        }
+      }
+
+      if (!sender) {
+        for (const candidateContainer of containers) {
+          const labels = [
+            ...candidateContainer.querySelectorAll<HTMLElement>('img[alt], [aria-label], [title]'),
+          ].flatMap((candidate) => [
+            candidate.getAttribute("alt"),
+            candidate.getAttribute("aria-label"),
+            candidate.getAttribute("title"),
+          ]);
+          sender = labels.find((label): label is string =>
+            Boolean(
+              label &&
+              label !== ownLabel &&
+              label.length <= 120 &&
+              (/프로필 사진|profile picture|보낸 메시지|프로필 페이지|open the profile page of/i.test(label)),
+            ),
+          ) ?? null;
+          if (sender) {
+            senderSource = "profile";
+            break;
+          }
+        }
+      }
+
+      return {
+        text: displayText,
+        sender,
+        ariaLabel: ownLabel,
+        timestamp: element.querySelector("time")?.getAttribute("datetime"),
+        ...(isReel ? { kind: "reel" as const } : {}),
+        ...(senderSource ? { senderSource } : {}),
+      };
+    })
+    .filter((item) => item.text.trim().length > 0);
+}
+
 export interface InstagramWebOptions {
   profileDir: string;
   headless?: boolean;
@@ -74,40 +322,43 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
 
     while (this.refreshRunning) await page.waitForTimeout(50);
     const previousCount = this.messageHistory.get(threadId)?.length ?? this.snapshot.messages.length;
-    const moved = await page.locator("main").evaluate((main): boolean => {
-      const candidates = [...main.querySelectorAll<HTMLElement>("div")]
-        .filter((element) => {
-          const rect = element.getBoundingClientRect();
-          const style = getComputedStyle(element);
-          return (
-            rect.width > 280 &&
-            rect.height > 180 &&
-            rect.left > window.innerWidth * 0.3 &&
-            element.scrollHeight > element.clientHeight + 30 &&
-            /(auto|scroll)/.test(style.overflowY)
-          );
-        })
-        .sort((left, right) => left.clientWidth * left.clientHeight - right.clientWidth * right.clientHeight);
-      const scroller = candidates[0];
-      if (!scroller) return false;
-      const before = scroller.scrollTop;
-      const amount = Math.max(400, Math.floor(scroller.clientHeight * 0.8));
-      scroller.scrollBy({ top: -amount, behavior: "instant" });
-      if (scroller.scrollTop === before && before === 0) {
-        scroller.scrollTop = -amount;
-      }
-      return scroller.scrollTop !== before;
-    }).catch(() => false);
-    if (!moved) return 0;
-
-    await page.waitForTimeout(450);
+    // Set this before scrolling because the DOM observer can refresh as soon
+    // as Instagram inserts virtualized older rows. Marking it afterwards lets
+    // that first refresh append old messages as if they were new.
     this.loadingOlder = true;
     try {
+      const moved = await page.locator("main").evaluate((main): boolean => {
+        const candidates = [...main.querySelectorAll<HTMLElement>("div")]
+          .filter((element) => {
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            return (
+              rect.width > 280 &&
+              rect.height > 180 &&
+              rect.left > window.innerWidth * 0.3 &&
+              element.scrollHeight > element.clientHeight + 30 &&
+              /(auto|scroll)/.test(style.overflowY)
+            );
+          })
+          .sort((left, right) => left.clientWidth * left.clientHeight - right.clientWidth * right.clientHeight);
+        const scroller = candidates[0];
+        if (!scroller) return false;
+        const before = scroller.scrollTop;
+        const amount = Math.max(400, Math.floor(scroller.clientHeight * 0.8));
+        scroller.scrollBy({ top: -amount, behavior: "instant" });
+        if (scroller.scrollTop === before && before === 0) {
+          scroller.scrollTop = -amount;
+        }
+        return scroller.scrollTop !== before;
+      }).catch(() => false);
+      if (!moved) return 0;
+
+      await page.waitForTimeout(450);
       await this.performRefresh();
+      return Math.max(0, (this.messageHistory.get(threadId)?.length ?? 0) - previousCount);
     } finally {
       this.loadingOlder = false;
     }
-    return Math.max(0, (this.messageHistory.get(threadId)?.length ?? 0) - previousCount);
   }
 
   public async loadMoreConversations(): Promise<number> {
@@ -193,67 +444,7 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
     if (conversation.href.startsWith("button:")) {
       const index = Number(conversation.href.slice("button:".length));
       try {
-        await page.locator(THREAD_ROW_SELECTOR).evaluateAll((elements, target) => {
-          const rows = elements.filter((element) => {
-            const rect = element.getBoundingClientRect();
-            const parts = [...new Set(
-              [...element.querySelectorAll("span")]
-                .map((part) => part.textContent?.replaceAll("\u00a0", " ").trim())
-                .filter((part): part is string => Boolean(part)),
-            )];
-            const text = parts.length >= 2
-              ? parts.join("\n")
-              : (element as HTMLElement).innerText.trim();
-            return (
-              text.length > 0 &&
-              rect.x < 500 &&
-              rect.width > 300 &&
-              rect.height >= 48 &&
-              rect.height <= 110
-            );
-          });
-          const normalizedTitle = target.title.replaceAll("\u00a0", " ").trim();
-          const previewLead = target.preview
-            ?.replaceAll("\u00a0", " ")
-            .split(" · ")[0]
-            ?.trim();
-          const rowIdentity = (element: Element): string | undefined => {
-            const fiberKey = Object.keys(element).find((key) => key.startsWith("__reactFiber$"));
-            let fiber = fiberKey
-              ? (element as unknown as Record<string, {
-                  memoizedProps?: Record<string, unknown>;
-                  return?: unknown;
-                }>)[fiberKey]
-              : undefined;
-            for (let depth = 0; fiber && depth < 12; depth += 1) {
-              const props = fiber.memoizedProps;
-              const threadKey = props?.threadKeyForSelection ?? props?.threadFbidForSelection;
-              if (typeof threadKey === "string" || typeof threadKey === "number") {
-                return `thread:${threadKey}`;
-              }
-              fiber = fiber.return as typeof fiber;
-            }
-            return undefined;
-          };
-          const titleMatches = rows.filter((element) => {
-            const parts = [...new Set(
-              [...element.querySelectorAll("span")]
-                .map((part) => part.textContent?.replaceAll("\u00a0", " ").trim())
-                .filter((part): part is string => Boolean(part)),
-            )];
-            return parts[0] === normalizedTitle;
-          });
-          const identityMatch = target.identity
-            ? titleMatches.find((element) => rowIdentity(element) === target.identity)
-            : undefined;
-          const matched = identityMatch ?? titleMatches.find((element) => {
-            if (!previewLead) return true;
-            const text = (element.textContent ?? "").replaceAll("\u00a0", " ");
-            return text.includes(previewLead);
-          }) ?? (titleMatches.length === 1 ? titleMatches[0] : rows[target.index]);
-          if (!(matched instanceof HTMLElement)) throw new Error("대화 행을 찾지 못했습니다.");
-          matched.click();
-        }, {
+        await page.locator(THREAD_ROW_SELECTOR).evaluateAll(clickInstagramConversationRow, {
           index,
           title: conversation.title,
           preview: conversation.preview,
@@ -540,54 +731,7 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
   private async readVisibleMessages(page: Page, threadId: string): Promise<ChatMessage[]> {
     let rawMessages = await page
       .locator('main [role="row"], main [role="listitem"]')
-      .evaluateAll((elements): RawMessage[] =>
-        elements
-          .map((element) => {
-            const node = element as HTMLElement;
-            const text = node.innerText ?? "";
-            const ownLabel = element.getAttribute("aria-label");
-            let sender: string | null = null;
-            let container: HTMLElement | null = node;
-
-            for (let depth = 0; depth < 7 && container && !sender; depth += 1) {
-              const lines = [...new Set(
-                container.innerText
-                  .split("\n")
-                  .map((line) => line.trim())
-                  .filter(Boolean),
-              )];
-              if (lines.length >= 2 && lines[0] !== text.trim() && lines[0]!.length <= 80) {
-                sender = lines[0]!;
-                break;
-              }
-
-              const labels = [
-                ...container.querySelectorAll<HTMLElement>('img[alt], [aria-label], [title]'),
-              ].flatMap((candidate) => [
-                candidate.getAttribute("alt"),
-                candidate.getAttribute("aria-label"),
-                candidate.getAttribute("title"),
-              ]);
-              sender = labels.find((label): label is string =>
-                Boolean(
-                  label &&
-                  label !== ownLabel &&
-                  label.length <= 120 &&
-                  (/프로필 사진|profile picture|보낸 메시지|프로필 페이지|open the profile page of/i.test(label)),
-                ),
-              ) ?? null;
-              container = container.parentElement;
-            }
-
-            return {
-              text,
-              sender,
-              ariaLabel: ownLabel,
-              timestamp: element.querySelector("time")?.getAttribute("datetime"),
-            };
-          })
-          .filter((item) => item.text.trim().length > 0),
-      );
+      .evaluateAll(readInstagramMessageRows);
 
     if (rawMessages.length === 0) {
       rawMessages = await page.locator("main div").evaluateAll((elements): RawMessage[] => {
@@ -598,6 +742,107 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
             const rect = node.getBoundingClientRect();
             const style = getComputedStyle(node);
             const text = node.innerText.trim();
+            const reelLink = node.matches('a[href*="/reel/"]')
+              ? node
+              : node.closest<HTMLElement>('a[href*="/reel/"]') ??
+                node.querySelector<HTMLElement>('a[href*="/reel/"]');
+            let inlineShare = false;
+            let sharedTargetUrl = "";
+            const shareContainers: HTMLElement[] = [
+              node,
+              ...node.querySelectorAll<HTMLElement>("*"),
+            ];
+            let shareContainer = node.parentElement;
+            for (let depth = 0; depth < 5 && shareContainer; depth += 1) {
+              shareContainers.push(shareContainer);
+              if (shareContainer.matches('[role="row"], [role="listitem"]')) break;
+              shareContainer = shareContainer.parentElement;
+            }
+            for (const candidateContainer of shareContainers.slice(0, 100)) {
+              const fiberKey = Object.keys(candidateContainer).find((key) =>
+                key.startsWith("__reactFiber$") || key.startsWith("__reactProps$"),
+              );
+              if (!fiberKey) continue;
+              const root = (candidateContainer as unknown as Record<string, unknown>)[fiberKey];
+              const fiberQueue: Array<{ value: unknown; depth: number }> = [
+                { value: root, depth: 0 },
+              ];
+              const visitedFibers = new WeakSet<object>();
+              for (let fiberIndex = 0; fiberIndex < fiberQueue.length && fiberIndex < 60; fiberIndex += 1) {
+                const fiberEntry = fiberQueue[fiberIndex]!;
+                const fiberValue = fiberEntry.value;
+                if (!fiberValue || typeof fiberValue !== "object" || visitedFibers.has(fiberValue)) continue;
+                visitedFibers.add(fiberValue);
+                const fiber = fiberValue as Record<string, unknown>;
+                const propsQueue: Array<{ value: unknown; depth: number }> = [
+                  { value: fiber.memoizedProps, depth: 0 },
+                  { value: fiber.pendingProps, depth: 0 },
+                ];
+                const visitedProps = new WeakSet<object>();
+                for (let propIndex = 0; propIndex < propsQueue.length && propIndex < 120; propIndex += 1) {
+                  const entry = propsQueue[propIndex]!;
+                  if (!entry.value || typeof entry.value !== "object" || visitedProps.has(entry.value)) continue;
+                  try {
+                    if (entry.value instanceof Node || entry.value instanceof Window) continue;
+                  } catch {
+                    continue;
+                  }
+                  visitedProps.add(entry.value);
+                  const record = entry.value as Record<string, unknown>;
+                  try {
+                    if (record.content_type === "MESSAGE_INLINE_SHARE") inlineShare = true;
+                    if (typeof record.targetUrl === "string") sharedTargetUrl = record.targetUrl;
+                  } catch {
+                    continue;
+                  }
+                  if (entry.depth >= 4) continue;
+                  try {
+                    for (const value of Object.values(record)) {
+                      if (
+                        value &&
+                        typeof value === "object" &&
+                        !(value instanceof Node) &&
+                        !(value instanceof Window)
+                      ) {
+                        propsQueue.push({ value, depth: entry.depth + 1 });
+                      }
+                    }
+                  } catch {
+                    continue;
+                  }
+                }
+                if (fiberEntry.depth < 5 && fiber.child) {
+                  fiberQueue.push({ value: fiber.child, depth: fiberEntry.depth + 1 });
+                }
+                if (fiberEntry.depth > 0 && fiber.sibling) {
+                  fiberQueue.push({ value: fiber.sibling, depth: fiberEntry.depth });
+                }
+                if (inlineShare && sharedTargetUrl) break;
+              }
+              if (inlineShare && sharedTargetUrl) break;
+            }
+            const isReel = Boolean(
+              reelLink ||
+              (inlineShare && (
+                /instagram\.com\/reel\//i.test(sharedTargetUrl) ||
+                /instagram\.com\/p\//i.test(sharedTargetUrl) &&
+                  /(?:carousel_share_child_media_id|is_ineligible_for_clips_chaining=false)/i.test(sharedTargetUrl)
+              )),
+            );
+            const reelTitle = reelLink
+              ? [
+                  reelLink.getAttribute("aria-label"),
+                  reelLink.getAttribute("title"),
+                ]
+                  .map((candidate) => candidate?.replaceAll("\u00a0", " ").trim())
+                  .find((candidate): candidate is string => Boolean(
+                    candidate &&
+                    candidate.length <= 240 &&
+                    !/^[a-z0-9._]+$/i.test(candidate) &&
+                    !/^(?:릴스|reel|reels|watch reel|original audio)$/i.test(candidate) &&
+                    !/(?:님의 릴스|(?:'s|’s) reel|reel by .+)$/i.test(candidate),
+                  ))
+              : undefined;
             const isVisibleChatArea =
               rect.x > Math.min(470, viewportWidth * 0.38) &&
               rect.y > 70 &&
@@ -616,13 +861,19 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
 
             const sentByMe = rect.right > viewportWidth * 0.9;
             let sender = sentByMe ? "나" : "unknown";
+            let senderSource: "display" | "profile" | undefined;
             if (!sentByMe) {
               let container = node.parentElement;
+              const containers: HTMLElement[] = [];
               for (let depth = 0; depth < 9 && container; depth += 1) {
-                const containerRect = container.getBoundingClientRect();
+                containers.push(container);
+                container = container.parentElement;
+              }
+              for (const candidateContainer of containers) {
+                const containerRect = candidateContainer.getBoundingClientRect();
                 const lines = [
                   ...new Set(
-                    container.innerText
+                    candidateContainer.innerText
                       .split("\n")
                       .map((line) => line.trim())
                       .filter(Boolean),
@@ -637,34 +888,44 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
                   candidate.length <= 80
                 ) {
                   sender = candidate;
+                  senderSource = "display";
                   break;
                 }
-
-                const labels = [
-                  ...container.querySelectorAll<HTMLElement>('img[alt], [aria-label], [title]'),
-                ].flatMap((candidateNode) => [
-                  candidateNode.getAttribute("alt"),
-                  candidateNode.getAttribute("aria-label"),
-                  candidateNode.getAttribute("title"),
-                ]);
-                const profileLabel = labels.find((label): label is string =>
-                  Boolean(
-                    label &&
-                    label.length <= 120 &&
-                    /프로필 사진|profile picture|보낸 메시지|프로필 페이지|open the profile page of/i.test(label),
-                  ),
-                );
-                if (profileLabel) {
-                  sender = profileLabel;
-                  break;
+              }
+              if (sender === "unknown") {
+                for (const candidateContainer of containers) {
+                  const labels = [
+                    ...candidateContainer.querySelectorAll<HTMLElement>('img[alt], [aria-label], [title]'),
+                  ].flatMap((candidateNode) => [
+                    candidateNode.getAttribute("alt"),
+                    candidateNode.getAttribute("aria-label"),
+                    candidateNode.getAttribute("title"),
+                  ]);
+                  const profileLabel = labels.find((label): label is string =>
+                    Boolean(
+                      label &&
+                      label.length <= 120 &&
+                      /프로필 사진|profile picture|보낸 메시지|프로필 페이지|open the profile page of/i.test(label),
+                    ),
+                  );
+                  if (profileLabel) {
+                    sender = profileLabel;
+                    senderSource = "profile";
+                    break;
+                  }
                 }
-                container = container.parentElement;
               }
             }
             return [{
-              text,
+              text: isReel
+                ? reelTitle
+                  ? `${reelTitle.replace(/\s*\(릴스\)$/, "")}(릴스)`
+                  : "(릴스)"
+                : text,
               sender,
               timestamp: null,
+              ...(isReel ? { kind: "reel" as const } : {}),
+              ...(senderSource ? { senderSource } : {}),
             }];
           });
       });
@@ -675,6 +936,9 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
       if (raw.sender === "나") {
         lastExternalSender = undefined;
         return raw;
+      }
+      if (raw.kind === "reel" && raw.senderSource === "profile" && lastExternalSender) {
+        return { ...raw, sender: lastExternalSender };
       }
       if (raw.sender && raw.sender !== "unknown") {
         lastExternalSender = raw.sender;
@@ -717,36 +981,44 @@ function normalizeComparableText(value: string): string {
   return value.replaceAll("\u00a0", " ").replace(/\s+/g, " ").trim();
 }
 
-function observeInstagramChanges(): void {
+export function observeInstagramChanges(): void {
   const key = "__ohMyDmObserverInstalled";
   const browserWindow = window as typeof window & Record<string, unknown>;
   if (browserWindow[key]) return;
   browserWindow[key] = true;
 
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const wake = (): void => {
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => {
-      const callback = browserWindow.__ohMyDmWake;
-      if (typeof callback === "function") void callback();
-    }, 120);
-  };
-
-  const start = (): void => {
-    if (!document.body) return;
-    new MutationObserver(wake).observe(document.body, {
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => {
+      if (!document.body) return;
+      new MutationObserver(() => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => {
+          const callback = browserWindow.__ohMyDmWake;
+          if (typeof callback === "function") void callback();
+        }, 120);
+      }).observe(document.body, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: ["aria-label", "aria-live", "href"],
+      });
+    }, { once: true });
+  } else if (document.body) {
+    new MutationObserver(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const callback = browserWindow.__ohMyDmWake;
+        if (typeof callback === "function") void callback();
+      }, 120);
+    }).observe(document.body, {
       subtree: true,
       childList: true,
       characterData: true,
       attributes: true,
       attributeFilter: ["aria-label", "aria-live", "href"],
     });
-  };
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", start, { once: true });
-  } else {
-    start();
   }
 }
 

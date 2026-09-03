@@ -12,6 +12,8 @@ export interface RawMessage {
   sender?: string | null;
   ariaLabel?: string | null;
   timestamp?: string | null;
+  kind?: "reel";
+  senderSource?: "display" | "profile";
 }
 
 export function threadIdFromHref(href: string): string | undefined {
@@ -181,7 +183,9 @@ export function normalizeSenderLabel(value?: string | null): string | undefined 
     /^(.+?)의 프로필 페이지(?:를)? 열기$/,
     /^open the profile page of (.+)$/i,
     /^(.+?) replied to you$/i,
+    /^(.+?) replied to .+$/i,
     /^(.+?)님이 회원님에게 답장했습니다$/,
+    /^(.+?)님이 .+?님에게 보낸 답장$/,
     /^(.+?)(?:'s|’s) profile picture$/i,
     /^profile picture of (.+)$/i,
   ];
