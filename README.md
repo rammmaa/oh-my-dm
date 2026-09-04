@@ -8,7 +8,7 @@
 
 **DM 하는 것처럼 보이지 않게 DM하세요.**
 
-oh-my-dm은 Agent CLI처럼 보이도록 만든 눈치 덜 보이는 TUI 메신저입니다. Instagram과 카카오톡을 Codex CLI, Claude Code, OpenCode 같은 도구에서 영감을 받은 인터페이스로 표시해, 주변 사람이 화면을 얼핏 봤을 때 열린 채팅 앱보다 코딩 에이전트 작업처럼 보이게 합니다.
+oh-my-dm은 Agent CLI처럼 보이도록 만든 눈치 덜 보이는 TUI 메신저입니다. Instagram, 카카오톡, Discord를 Codex CLI, Claude Code, OpenCode 같은 도구에서 영감을 받은 인터페이스로 표시해, 주변 사람이 화면을 얼핏 봤을 때 열린 채팅 앱보다 코딩 에이전트 작업처럼 보이게 합니다.
 
 핵심 목적은 회사, 교실 또는 사람이 함께 있는 공간에서 익숙한 메신저 창으로 시선을 끌지 않고 조금 더 사적으로 DM을 확인하고 보내는 것입니다. 터미널 작업 흐름을 유지하는 것은 추가 장점입니다. 별도 애플리케이션 백엔드나 메시지 저장소는 없으며, 로컬 connector가 원본 서비스의 데이터를 읽어 하나의 Agent 스타일 workspace에 표시합니다.
 
@@ -20,11 +20,14 @@ Node.js 22 이상이 필요합니다. 설치 없이 최신 버전을 바로 실�
 # Instagram 최초 로그인
 npx oh-my-dm@latest login instagram
 
+# Discord 최초 로그인
+npx oh-my-dm@latest login discord
+
 # 실행
 npx oh-my-dm@latest
 ```
 
-로그인을 마치면 `Ctrl+C`로 로그인 창을 닫으세요. 카카오톡은 별도 로그인 없이 실행 중인 macOS 앱에 연결됩니다.
+Instagram과 Discord는 각각 한 번씩 로그인합니다. 로그인을 마치면 `Ctrl+C`로 로그인 창을 닫으세요. 카카오톡은 별도 로그인 없이 실행 중인 macOS 앱에 연결됩니다.
 
 ### 사용법
 
@@ -43,7 +46,7 @@ npx oh-my-dm@latest
 - **메신저처럼 바로 보이지 않는 화면** — 익숙한 DM 창 대신 Agent CLI workspace 형태로 대화를 표시
 - **주변 눈치를 덜 보는 메시징** — 주변 사람의 시선을 덜 끌며 DM을 확인하고 전송하도록 설계
 - **터미널 작업 흐름에도 잘 맞는 UI** — Agent 스타일 transcript, command palette, 모델 표기, workspace 경로, 테마와 키보드 중심 탐색
-- **DM을 위한 하나의 workspace** — Instagram과 카카오톡 대화를 통합된 TUI에서 탐색
+- **DM을 위한 하나의 workspace** — Instagram, 카카오톡, Discord 대화를 통합된 TUI에서 탐색
 - **로컬 우선·휘발성 구조** — oh-my-dm 서버와 영구 메시지 데이터베이스 없이 동작
 - **실제 터미널 입력에 최적화** — 반응형 레이아웃, scrollback, history paging과 한글 IME 지원
 
@@ -54,6 +57,7 @@ npx oh-my-dm@latest
 - 사진, 영상, 릴스, 게시물, 이모티콘, 공감, 답장, 수정, 삭제와 시스템 안내를 공통 메시지 타입으로 정규화
 - 그룹 대화의 실제 발신자 이름 표시
 - macOS 카카오톡 대화 목록·메시지 조회와 전송
+- Discord DM, 그룹 DM과 서버 텍스트 채널 조회와 전송. 서버 채널은 `서버명 #채널명`으로 대화 목록에 함께 표시
 - 하나의 통합 대화 목록 사용 및 `/connectors`에서 연결 상태 확인
 - DOM과 WebSocket wake-up signal을 통한 event-driven 업데이트
 - 로그인 세션만 전용 브라우저 프로필에 저장
@@ -72,6 +76,7 @@ Node.js 22 이상이 필요합니다. Instagram connector는 전용 Playwright C
 ```bash
 npm install --global oh-my-dm
 oh-my-dm login instagram
+oh-my-dm login discord
 oh-my-dm
 ```
 
@@ -87,7 +92,7 @@ npm install --global --allow-scripts=oh-my-dm oh-my-dm
 
 카카오톡을 사용하려면 oh-my-dm을 실행한 터미널 앱을 `시스템 설정 → 개인정보 보호 및 보안 → 손쉬운 사용`에서 허용하세요. 앱은 카카오톡 손쉬운 사용 UI에 불러온 채팅 내용만 읽으며, native bridge나 디스크에 대화와 메시지를 기록하지 않습니다.
 
-Instagram 로그인은 열리는 전용 Playwright Chromium 창에서 직접 완료합니다. TUI는 같은 격리 프로필을 headless로 재사용하며 사용자의 기본 브라우저 프로필이나 쿠키에는 접근하지 않습니다. 기본 데이터 디렉터리는 `~/.oh-my-dm`입니다. 개발자는 `OH_MY_DM_BROWSER`로 Chromium 실행 파일을 변경하거나 별도의 데이터 디렉터리를 사용할 수 있습니다.
+Instagram 로그인은 열리는 전용 Playwright Chromium 창에서 직접 완료합니다. Discord도 같은 방식으로 `oh-my-dm login discord`를 실행해 로그인하며, 프로필은 `~/.oh-my-dm/browser/discord`에 따로 둡니다. Discord가 새 브라우저를 의심해 캡차를 반복하면 로그인 화면의 QR 코드를 모바일 앱으로 찍는 방법이 있습니다. TUI는 같은 격리 프로필을 headless로 재사용하며 사용자의 기본 브라우저 프로필이나 쿠키에는 접근하지 않습니다. 기본 데이터 디렉터리는 `~/.oh-my-dm`입니다. 개발자는 `OH_MY_DM_BROWSER`로 Chromium 실행 파일을 변경하거나 별도의 데이터 디렉터리를 사용할 수 있습니다.
 
 ```bash
 OH_MY_DM_DATA="$PWD/.oh-my-dm" npm run dev
@@ -99,6 +104,7 @@ OH_MY_DM_DATA="$PWD/.oh-my-dm" npm run dev
 oh-my-dm chat --headed
 oh-my-dm doctor
 oh-my-dm logout instagram
+oh-my-dm logout discord
 ```
 
 ### 플랫폼 및 콘텐츠 지원
@@ -107,6 +113,7 @@ oh-my-dm logout instagram
 | --- | --- | --- |
 | Instagram | macOS와 Linux에서 CI 검증 | 번들된 Playwright Chromium을 사용합니다. Windows는 아직 공식 검증되지 않았습니다. |
 | 카카오톡 | macOS 전용 | 데스크톱 카카오톡 앱 로그인과 손쉬운 사용 권한이 필요합니다. |
+| Discord | macOS와 Linux에서 CI 검증 | 번들된 Playwright Chromium을 사용합니다. DM, 그룹 DM, 서버 텍스트 채널을 지원하며 음성·포럼·스테이지 채널과 접힌 카테고리 안의 채널은 표시하지 않습니다. |
 
 텍스트 대화는 전체 내용을 표시합니다. 사진, 영상, 릴스, 게시물, 이모티콘, 공감, 답장, 수정, 삭제와 시스템 안내는 connector와 무관한 공통 메시지 타입으로 정규화하고, 원본 UI에서 확인할 수 있을 때 일관된 텍스트 표식으로 표시합니다. 공유 릴스는 Instagram이 제목을 제공하면 `제목(릴스)`, 제공하지 않으면 `(릴스)`로 표시합니다. 미디어 파일 자체는 다운로드하거나 렌더링하지 않으며, 원본 앱의 보이는 DOM이나 손쉬운 사용 트리에 노출되지 않은 콘텐츠는 생략될 수 있습니다.
 
@@ -116,10 +123,11 @@ oh-my-dm logout instagram
 
 oh-my-dm은 메시지를 저장하지 않지만 동작을 위해 일부 로컬 상태가 필요합니다.
 
-- Instagram 전용 브라우저 프로필에는 로그인 cookie가 있으므로 민감한 정보로 취급해야 합니다.
+- Instagram과 Discord 전용 브라우저 프로필에는 로그인 세션이 있으므로 민감한 정보로 취급해야 합니다.
 - UI 언어, 테마와 모델 표기 설정은 로컬에 저장됩니다.
 - `/clear`는 터미널 화면과 scrollback만 비우며 Instagram이나 카카오톡의 메시지를 삭제하지 않습니다.
 - `oh-my-dm logout instagram`은 Instagram 전용 브라우저 프로필을 삭제해 이 CLI에서 로그아웃합니다. 다른 브라우저의 로그인에는 영향을 주지 않습니다.
+- `oh-my-dm logout discord`는 같은 방식으로 Discord 전용 브라우저 프로필을 삭제합니다.
 
 `~/.oh-my-dm/browser`를 Git에 commit하거나 신뢰할 수 없는 위치에 공유·백업하지 마세요. 기존 로그인 세션을 잃지 않도록 이전 설치에서는 legacy 경로인 `~/.oh-my-chat`을 계속 사용할 수 있습니다.
 
@@ -171,6 +179,7 @@ CLI를 제거하려면 필요에 따라 Instagram 세션을 먼저 삭제한 뒤
 
 ```bash
 oh-my-dm logout instagram
+oh-my-dm logout discord
 npm uninstall --global oh-my-dm
 ```
 
@@ -182,13 +191,14 @@ npm uninstall --global oh-my-dm
 | npm이 install script를 차단함 | `npm install --global --allow-scripts=oh-my-dm oh-my-dm`으로 다시 설치하세요. 이 script는 Ink를 patch하고 전용 Chromium을 다운로드합니다. |
 | Instagram 로그인이 필요하다고 나오거나 대화방이 나타나지 않음 | `oh-my-dm login instagram`을 다시 실행하세요. 세션이 손상됐다면 `oh-my-dm logout instagram` 후 다시 로그인하세요. |
 | Chromium을 찾을 수 없음 | `oh-my-dm doctor`로 확인한 뒤 install script를 허용해 다시 설치하세요. |
+| Discord 로그인이 필요하다고 나오거나 채널이 나타나지 않음 | `oh-my-dm login discord`를 다시 실행하세요. 서버 채널은 시작 후 서버를 하나씩 읽어오므로 몇 초 걸릴 수 있고, 접힌 카테고리 안의 채널은 Discord에서 펼쳐 두어야 보입니다. |
 | 카카오톡 연결·대화방 열기·전송이 되지 않음 | 앱 설치와 로그인을 확인하고, oh-my-dm을 실행하는 정확한 터미널 앱에 손쉬운 사용 권한을 부여한 뒤 카카오톡과 터미널을 모두 재시작하세요. |
 | Connector 내용이 갱신되지 않음 | `/refresh`를 실행하세요. Instagram이나 카카오톡 UI가 바뀐 경우에는 oh-my-dm 업데이트가 필요할 수 있습니다. |
 | 터미널이 좁거나 행이 잘림 | 터미널 창을 넓혀주세요. 반응형 layout을 사용하지만 매우 작은 터미널에서는 일부 hint와 preview를 표시할 수 없습니다. |
 
 ### 주의
 
-Instagram DOM selector와 카카오톡 손쉬운 사용 UI 구조는 예고 없이 변경되어 connector가 깨질 수 있습니다. Instagram은 허가받지 않은 자동 데이터 수집도 제한합니다. 개인 실험 용도로 보수적으로 사용하세요. 대량 전송, 자동 재시도와 우회 기능은 의도적으로 포함하지 않습니다.
+Instagram과 Discord DOM selector, 카카오톡 손쉬운 사용 UI 구조는 예고 없이 변경되어 connector가 깨질 수 있습니다. Instagram과 Discord는 허가받지 않은 자동화 클라이언트를 약관으로 제한합니다. 개인 실험 용도로 보수적으로 사용하세요. 대량 전송, 자동 재시도와 우회 기능은 의도적으로 포함하지 않습니다.
 
 ### 기여 및 릴리스
 
@@ -202,7 +212,7 @@ Pull request를 열기 전에 [CONTRIBUTING.md](CONTRIBUTING.md)를 읽어주세
 
 **DM without looking like you're DMing.**
 
-oh-my-dm is a discreet TUI messenger styled to look like an Agent CLI. It brings Instagram and KakaoTalk into an interface inspired by tools such as Codex CLI, Claude Code, and OpenCode, making casual screen glances look more like coding-agent work than an open chat app.
+oh-my-dm is a discreet TUI messenger styled to look like an Agent CLI. It brings Instagram, KakaoTalk, and Discord into an interface inspired by tools such as Codex CLI, Claude Code, and OpenCode, making casual screen glances look more like coding-agent work than an open chat app.
 
 The main goal is simple: let you check and send DMs more privately in shared offices, classrooms, or other places where a familiar messenger window would immediately draw attention. Staying inside your terminal workflow is an additional benefit. There is no application backend or message archive; local connectors read from the original services and present everything through one agent-style workspace.
 
@@ -214,11 +224,14 @@ Requires Node.js 22 or later. Run the latest version directly without a global i
 # First-time Instagram login
 npx oh-my-dm@latest login instagram
 
+# First-time Discord login
+npx oh-my-dm@latest login discord
+
 # Launch
 npx oh-my-dm@latest
 ```
 
-After signing in, press `Ctrl+C` to close the login window. KakaoTalk connects to the running macOS app without a separate oh-my-dm login.
+Instagram and Discord each need one login. After signing in, press `Ctrl+C` to close the login window. KakaoTalk connects to the running macOS app without a separate oh-my-dm login.
 
 ### Usage
 
@@ -237,7 +250,7 @@ After signing in, press `Ctrl+C` to close the login window. KakaoTalk connects t
 - **Doesn't immediately look like a messenger** — conversations are presented as an Agent CLI workspace instead of a familiar DM window
 - **Designed for discreet messaging** — check and send DMs with less visual attention from people around you
 - **Also fits your terminal workflow** — use an agent-style transcript, command palette, model label, workspace path, themes, and keyboard-first navigation
-- **One workspace for DMs** — browse Instagram and KakaoTalk conversations through a unified TUI
+- **One workspace for DMs** — browse Instagram, KakaoTalk, and Discord conversations through a unified TUI
 - **Local-first and ephemeral** — no oh-my-dm server and no persisted message database
 - **Built for real terminal input** — responsive layouts, scrollback, history paging, and Korean IME support
 
@@ -248,6 +261,7 @@ After signing in, press `Ctrl+C` to close the login window. KakaoTalk connects t
 - Normalize photos, videos, Reels, posts, stickers, reactions, replies, edits, deletions, and system notices into shared message types
 - See actual sender names in group conversations
 - Browse and send KakaoTalk messages on macOS
+- Browse and send Discord DMs, group DMs, and server text channels; server channels appear in the same list as `Server #channel`
 - Use one unified conversation list and inspect connections with `/connectors`
 - Receive event-driven updates through DOM and WebSocket wake-up signals
 - Keep only the login session in a dedicated browser profile
@@ -267,6 +281,7 @@ Node.js 22 or later is required. The Instagram connector installs and uses its o
 ```bash
 npm install --global oh-my-dm
 oh-my-dm login instagram
+oh-my-dm login discord
 oh-my-dm
 ```
 
@@ -282,7 +297,7 @@ If typing `oh-my-dm` changes into a local directory with that name instead of la
 
 For KakaoTalk, grant Accessibility permission to the terminal running oh-my-dm under `System Settings → Privacy & Security → Accessibility`. The app reads only chat content loaded in KakaoTalk's accessibility UI. Conversations and messages are not written to the native bridge or disk.
 
-Instagram login is completed manually in the dedicated Playwright Chromium window that opens. The same isolated profile is reused headlessly by the TUI; your default browser profile and cookies are never accessed. The default data directory is `~/.oh-my-dm`. Developers can override the Chromium executable with `OH_MY_DM_BROWSER`, or use an isolated data directory:
+Instagram login is completed manually in the dedicated Playwright Chromium window that opens. Discord works the same way with `oh-my-dm login discord`, and its profile lives separately in `~/.oh-my-dm/browser/discord`. If Discord keeps asking for a captcha because it does not trust the fresh browser, scanning the QR code on the login page with the mobile app is an alternative. The same isolated profile is reused headlessly by the TUI; your default browser profile and cookies are never accessed. The default data directory is `~/.oh-my-dm`. Developers can override the Chromium executable with `OH_MY_DM_BROWSER`, or use an isolated data directory:
 
 ```bash
 OH_MY_DM_DATA="$PWD/.oh-my-dm" npm run dev
@@ -294,6 +309,7 @@ The regular TUI runs the bundled Playwright Chromium headlessly. Use a visible b
 oh-my-dm chat --headed
 oh-my-dm doctor
 oh-my-dm logout instagram
+oh-my-dm logout discord
 ```
 
 ### Platform and content support
@@ -302,6 +318,7 @@ oh-my-dm logout instagram
 | --- | --- | --- |
 | Instagram | macOS and Linux are CI-tested | Uses the bundled Playwright Chromium. Windows is not yet officially verified. |
 | KakaoTalk | macOS only | Requires the desktop KakaoTalk app, an active login, and Accessibility permission. |
+| Discord | macOS and Linux are CI-tested | Uses the bundled Playwright Chromium. Supports DMs, group DMs, and server text channels; voice, forum, and stage channels and channels inside collapsed categories are not shown. |
 
 Text conversations are fully rendered. Photos, videos, Reels, posts, stickers, reactions, replies, edits, deletions, and system notices are normalized into connector-independent message types and shown with consistent text markers when the source UI exposes them. Shared Reels use `title(릴스)` when Instagram provides a title, or `(릴스)` otherwise. Media files themselves are not downloaded or rendered, and content hidden from the source app's visible DOM or accessibility tree may still be omitted.
 
@@ -311,10 +328,11 @@ The model name and effort selected with `/model` are visual workspace labels onl
 
 Messages are not saved by oh-my-dm, but a small amount of local state is required:
 
-- The dedicated Instagram browser profile contains login cookies and must be treated as sensitive.
+- The dedicated Instagram and Discord browser profiles contain login sessions and must be treated as sensitive.
 - UI language, theme, and model-label preferences are saved locally.
 - `/clear` clears only the terminal view and scrollback. It does not delete messages from Instagram or KakaoTalk.
 - `oh-my-dm logout instagram` deletes the dedicated Instagram browser profile and signs this CLI out. It does not affect sessions in your other browsers.
+- `oh-my-dm logout discord` deletes the dedicated Discord browser profile in the same way.
 
 Do not commit, share, or back up `~/.oh-my-dm/browser` to an untrusted location. Older installations may continue using the legacy `~/.oh-my-chat` directory so existing login sessions are not lost.
 
@@ -366,6 +384,7 @@ To remove the CLI, optionally delete its Instagram session first and then uninst
 
 ```bash
 oh-my-dm logout instagram
+oh-my-dm logout discord
 npm uninstall --global oh-my-dm
 ```
 
@@ -377,13 +396,14 @@ npm uninstall --global oh-my-dm
 | npm blocks the install script | Reinstall with `npm install --global --allow-scripts=oh-my-dm oh-my-dm`. The script patches Ink and downloads the dedicated Chromium. |
 | Instagram asks for login or conversations never appear | Run `oh-my-dm login instagram` again. If the session is corrupted, run `oh-my-dm logout instagram` and log in again. |
 | Chromium cannot be found | Run `oh-my-dm doctor`, then reinstall with install scripts allowed. |
+| Discord asks for login or channels are missing | Run `oh-my-dm login discord` again. Server channels are read one server at a time after startup, so they can take a few seconds, and channels inside collapsed categories only appear once you expand the category in Discord. |
 | KakaoTalk does not connect, open a room, or send | Confirm the app is installed and signed in, grant Accessibility to the exact terminal app running oh-my-dm, then restart both KakaoTalk and the terminal. |
-| A connector looks stale | Run `/refresh`. Instagram and KakaoTalk UI changes can still require an oh-my-dm update. |
+| A connector looks stale | Run `/refresh`. Instagram, KakaoTalk, and Discord UI changes can still require an oh-my-dm update. |
 | The terminal is too narrow or rows look clipped | Enlarge the terminal window. The layout is responsive, but very small terminals cannot show every hint or preview. |
 
 ### Important
 
-Instagram DOM selectors and KakaoTalk accessibility UI structures can change without notice and may break the connectors. Instagram also restricts unauthorized automated data collection. Use this project conservatively for personal experimentation. Bulk messaging, automatic retries, and bypass mechanisms are intentionally excluded.
+Instagram and Discord DOM selectors and KakaoTalk accessibility UI structures can change without notice and may break the connectors. Instagram and Discord also restrict unauthorized automated clients in their terms of service. Use this project conservatively for personal experimentation. Bulk messaging, automatic retries, and bypass mechanisms are intentionally excluded.
 
 ### Contributing and releases
 
