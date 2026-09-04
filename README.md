@@ -149,6 +149,7 @@ oh-my-dm은 메시지를 저장하지 않지만 동작을 위해 일부 로컬 �
 /theme
 /language [auto|ko|en]
 /refresh
+/update
 /clear
 /exit
 ```
@@ -160,9 +161,11 @@ oh-my-dm은 메시지를 저장하지 않지만 동작을 위해 일부 로컬 �
 ### 업데이트 및 제거
 
 ```bash
-npm install --global oh-my-dm@latest
+oh-my-dm update
 oh-my-dm doctor
 ```
+
+새 버전이 있으면 입력창 위에 `Update available`을 표시하고 백그라운드에서 자동으로 설치합니다. 설치가 끝나면 `Update installed · Restart to update`로 바뀌며, 현재 채팅을 강제로 종료하지 않고 다음 실행부터 새 버전이 적용됩니다. `/update`를 실행해 수동으로 설치할 수도 있습니다. 자동 설치를 끄려면 `OH_MY_DM_NO_AUTO_UPDATE=1`을 설정하세요. 업데이트 확인이나 자동 설치가 실패해도 TUI 실행을 막지 않으며 `/update`로 다시 시도할 수 있습니다.
 
 CLI를 제거하려면 필요에 따라 Instagram 세션을 먼저 삭제한 뒤 package를 제거하세요.
 
@@ -337,6 +340,7 @@ Type `/` to open the command palette. Navigate with arrow keys, press `Tab` to a
 /theme
 /language [auto|ko|en]
 /refresh
+/update
 /clear
 /exit
 ```
@@ -348,9 +352,11 @@ To send a regular message beginning with `/`, type it with two slashes, such as 
 ### Update and uninstall
 
 ```bash
-npm install --global oh-my-dm@latest
+oh-my-dm update
 oh-my-dm doctor
 ```
+
+When a newer version is available, the composer shows `Update available` and installs it automatically in the background. Once installation finishes, the notice changes to `Update installed · Restart to update`; the current chat stays open and the new version takes effect on the next launch. You can also run `/update` to install manually. Set `OH_MY_DM_NO_AUTO_UPDATE=1` to disable automatic installation. A failed check or background installation never prevents the TUI from starting, and `/update` can retry it.
 
 To remove the CLI, optionally delete its Instagram session first and then uninstall the package:
 

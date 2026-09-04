@@ -175,9 +175,12 @@ export function normalizeMessage(
   if (!content) return undefined;
 
   const aria = raw.ariaLabel?.trim() ?? "";
+  const ariaSender = isInstagramTimestampLabel(aria)
+    ? undefined
+    : normalizeSenderLabel(aria.match(/^([^,:]+)[,:]/)?.[1]);
   const sender =
     normalizeSenderLabel(raw.sender) ||
-    normalizeSenderLabel(aria.match(/^([^,:]+)[,:]/)?.[1]) ||
+    ariaSender ||
     "unknown";
   const timestamp = raw.timestamp?.trim() || undefined;
   const replyTo = raw.replyTo ?? parseReplyReference(raw.sender) ?? parseReplyReference(aria);
@@ -204,10 +207,9 @@ export function normalizeMessage(
 export function normalizeSenderLabel(value?: string | null): string | undefined {
   const label = value?.replaceAll("\u00a0", " ").trim();
   if (!label) return undefined;
-  if (
-    /^(?:(?:19|20)\d{2}\.\s*)?\d{1,2}\.\s*\d{1,2}\.\s*(?:오전|오후)\s*\d{1,2}:\d{2}$/.test(label) ||
-    /^(?:오늘|어제)\s+(?:오전|오후)\s+\d{1,2}:\d{2}$/.test(label)
-  ) return undefined;
+  if (isInstagramTimestampLabel(label) || isInstagramMessageSeparatorLabel(label)) {
+    return undefined;
+  }
 
   const patterns = [
     /^(.+?)님의? 프로필 사진$/,
@@ -229,6 +231,21 @@ export function normalizeSenderLabel(value?: string | null): string | undefined 
 
   if (/^(?:프로필 사진|profile picture|message|메시지)$/i.test(label)) return undefined;
   return label.length <= 80 ? label : undefined;
+}
+
+export function isInstagramTimestampLabel(value: string): boolean {
+  const label = value.replaceAll("\u00a0", " ").trim();
+  return (
+    /^(?:(?:(?:19|20)\d{2}\.\s*)?\d{1,2}\.\s*\d{1,2}\.\s*|\([월화수목금토일]\)\s*|(?:오늘|어제)\s*)?(?:오전|오후)\s*\d{1,2}:\d{2}(?:\s*:\s*.+)?$/.test(label) ||
+    /^(?:(?:today|yesterday)(?:\s+at)?\s+|(?:(?:mon|tue|wed|thu|fri|sat|sun)(?:day)?),?\s+)?\d{1,2}:\d{2}\s*(?:am|pm)(?:\s*:\s*.+)?$/i.test(label) ||
+    /^(?:[a-z]+\s+\d{1,2},?\s+(?:19|20)\d{2},?\s+)\d{1,2}:\d{2}\s*(?:am|pm)(?:\s*:\s*.+)?$/i.test(label)
+  );
+}
+
+export function isInstagramMessageSeparatorLabel(value: string): boolean {
+  return /^(?:new messages?|unread messages?|새(?:로운)? 메시지|읽지 않은 메시지)$/i.test(
+    value.replaceAll("\u00a0", " ").trim(),
+  );
 }
 
 export function mergeMessageWindows(

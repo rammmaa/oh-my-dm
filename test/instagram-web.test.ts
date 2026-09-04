@@ -1,18 +1,46 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { chromium } from "playwright-core";
 
 import {
   canonicalizeInstagramSenders,
+  cloneInstagramProfile,
   clickInstagramConversationRow,
   inheritInstagramRawSenders,
   InstagramWebConnector,
   isTransientInstagramNavigationError,
+  isInstagramProfileLockError,
   observeInstagramChanges,
   readInstagramDirectThreadIdentity,
   readInstagramMessageRows,
 } from "../src/connectors/instagram-web.js";
+
+test("동시 실행용 Instagram 프로필 복제에서는 Chromium lock을 제외한다", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "oh-my-dm-profile-test-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const source = path.join(root, "source");
+  await fs.mkdir(path.join(source, "Default"), { recursive: true });
+  await Promise.all([
+    fs.writeFile(path.join(source, "Default", "Cookies"), "session"),
+    fs.writeFile(path.join(source, "Local State"), "state"),
+    fs.writeFile(path.join(source, "SingletonLock"), "locked"),
+  ]);
+
+  const clone = await cloneInstagramProfile(source, root);
+  assert.equal(await fs.readFile(path.join(clone.profileDir, "Default", "Cookies"), "utf8"), "session");
+  assert.equal(await fs.readFile(path.join(clone.profileDir, "Local State"), "utf8"), "state");
+  await assert.rejects(fs.lstat(path.join(clone.profileDir, "SingletonLock")), { code: "ENOENT" });
+});
+
+test("Chromium profile 중복 실행 오류를 식별한다", () => {
+  assert.equal(isInstagramProfileLockError(new Error("Failed to create a ProcessSingleton")), true);
+  assert.equal(isInstagramProfileLockError(new Error("profile appears to be in use")), true);
+  assert.equal(isInstagramProfileLockError(new Error("browser executable is missing")), false);
+});
 
 test("1:1 대화 헤더의 프로필 링크에서 표시 이름과 계정 ID를 연결한다", async (t) => {
   const browser = await chromium.launch({ headless: true });
@@ -481,6 +509,56 @@ test("프로필 사진은 Instagram 이미지 메시지로 오인하지 않는�
   assert.equal(messages.length, 1);
   assert.equal(messages[0]?.text.trim(), "안녕하세요");
   assert.equal(messages[0]?.kind, undefined);
+});
+
+test("Instagram 시간 구분 라벨을 발신자 이름으로 사용하지 않는다", async (t) => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent(`
+    <main>
+      <section>
+        <div role="row">
+          <span>오전 9:20</span>
+          <span>잘해먹노ㅠㅠㅜㅠ</span>
+          <img alt="허동운님의 프로필 사진" />
+        </div>
+      </section>
+    </main>
+  `);
+
+  const messages = await page
+    .locator('main [role="row"]')
+    .evaluateAll(readInstagramMessageRows);
+
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0]?.sender, "허동운님의 프로필 사진");
+  assert.notEqual(messages[0]?.sender, "오전 9:20");
+});
+
+test("Instagram 새 메시지 구분선을 발신자 이름으로 사용하지 않는다", async (t) => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent(`
+    <main>
+      <section>
+        <div role="row">
+          <span>New messages</span>
+          <span>ㅠㅜㅠㅜㅜㅠ</span>
+          <img alt="허동운님의 프로필 사진" />
+        </div>
+      </section>
+    </main>
+  `);
+
+  const messages = await page
+    .locator('main [role="row"]')
+    .evaluateAll(readInstagramMessageRows);
+
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0]?.sender, "허동운님의 프로필 사진");
+  assert.notEqual(messages[0]?.sender, "New messages");
 });
 
 test("발신자 없는 연속 행은 그룹의 유일한 프로필 identity를 사용한다", async (t) => {

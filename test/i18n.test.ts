@@ -18,4 +18,10 @@ test("language preferences and copy are available in Korean and English", () => 
   assert.equal(isLanguagePreference("ja"), false);
   assert.equal(getCopy("ko").selectConversation, "대화를 선택하세요");
   assert.equal(getCopy("en").selectConversation, "Select a conversation");
+  assert.match(getCopy("ko").starPrompt, /스타/);
+  assert.match(getCopy("en").starPrompt, /GitHub star/);
+  assert.equal(getCopy("ko").updateAvailable, "✔ Update available");
+  assert.equal(getCopy("en").updateAvailable, "✔ Update available");
+  assert.equal(getCopy("ko").updateInstalled, "✔ Update installed · Restart to update");
+  assert.equal(getCopy("en").updateInstalled, "✔ Update installed · Restart to update");
 });

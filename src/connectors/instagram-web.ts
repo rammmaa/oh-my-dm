@@ -1,5 +1,7 @@
 import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 import { chromium, type BrowserContext, type Page } from "playwright-core";
 
@@ -299,7 +301,10 @@ export function readInstagramMessageRows(elements: Element[]): RawMessage[] {
         if (
           lines.length >= (detectedMediaKind ? 1 : 2) &&
           lines[0] !== text.trim() &&
-          lines[0]!.length <= 80
+          lines[0]!.length <= 80 &&
+          !/^(?:new messages?|unread messages?|새(?:로운)? 메시지|읽지 않은 메시지)$/i.test(lines[0]!) &&
+          !/^(?:(?:(?:19|20)\d{2}\.\s*)?\d{1,2}\.\s*\d{1,2}\.\s*|\([월화수목금토일]\)\s*|(?:오늘|어제)\s*)?(?:오전|오후)\s*\d{1,2}:\d{2}$/.test(lines[0]!) &&
+          !/^(?:(?:today|yesterday)(?:\s+at)?\s+|(?:(?:mon|tue|wed|thu|fri|sat|sun)(?:day)?),?\s+)?\d{1,2}:\d{2}\s*(?:am|pm)$/i.test(lines[0]!)
         ) {
           sender = lines[0]!;
           senderSource = "display";
@@ -420,6 +425,30 @@ export function readInstagramMessageRows(elements: Element[]): RawMessage[] {
 export interface InstagramWebOptions {
   profileDir: string;
   headless?: boolean;
+  cloneProfileWhenLocked?: boolean;
+}
+
+export function isInstagramProfileLockError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /ProcessSingleton|profile (?:appears to be|is) in use|user data directory is already in use/i.test(message);
+}
+
+export async function cloneInstagramProfile(
+  sourceProfileDir: string,
+  temporaryRoot = os.tmpdir(),
+): Promise<{ profileDir: string; cleanupDir: string }> {
+  const cleanupDir = await fs.mkdtemp(path.join(temporaryRoot, "oh-my-dm-instagram-"));
+  const profileDir = path.join(cleanupDir, "profile");
+  try {
+    await fs.cp(sourceProfileDir, profileDir, {
+      recursive: true,
+      filter: (source) => !path.basename(source).startsWith("Singleton"),
+    });
+    return { profileDir, cleanupDir };
+  } catch (error) {
+    await fs.rm(cleanupDir, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 export interface InstagramDirectThreadIdentity {
@@ -578,6 +607,9 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
   private readingOlderWindow = false;
   private preserveLoadedConversations = false;
   private stopped = false;
+  private desiredRunning = false;
+  private lifecycleQueue: Promise<void> = Promise.resolve();
+  private temporaryProfileDir?: string;
   private readonly messageHistory = new Map<string, ChatMessage[]>();
   private readonly senderAliases = new Map<string, Map<string, string>>();
   private snapshot: ChatSnapshot = {
@@ -596,13 +628,14 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
   }
 
   public async refresh(): Promise<void> {
+    await this.requireReadyPage();
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     this.refreshTimer = undefined;
     await this.performRefresh();
   }
 
   public async loadOlderMessages(): Promise<number> {
-    const page = this.requirePage();
+    const page = await this.requireReadyPage();
     const threadId = page.url().match(/\/direct\/t\/([^/?#]+)/)?.[1];
     if (!threadId) return 0;
 
@@ -693,7 +726,7 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
   }
 
   public async loadMoreConversations(): Promise<number> {
-    const page = this.requirePage();
+    const page = await this.requireReadyPage();
     while (this.refreshRunning) await page.waitForTimeout(50);
     const previousCount = this.snapshot.conversations.length;
     // Scrolling virtualizes the top rows and emits DOM wake events before this
@@ -728,40 +761,121 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
     return Math.max(0, this.snapshot.conversations.length - previousCount);
   }
 
-  public async start(): Promise<void> {
+  public start(): Promise<void> {
+    this.desiredRunning = true;
     this.stopped = false;
+    return this.enqueueLifecycle(async () => {
+      if (!this.desiredRunning) return;
+      if (this.getUsablePage()) return;
+      if (this.context) {
+        await this.context.close().catch(() => undefined);
+        this.context = undefined;
+        this.page = undefined;
+        await this.removeTemporaryProfile();
+      }
+      await this.startBrowser();
+    });
+  }
+
+  private async startBrowser(): Promise<void> {
     await fs.mkdir(this.options.profileDir, { recursive: true, mode: 0o700 });
     const headless = this.options.headless ?? true;
     const browser = resolveBrowserExecutable();
     this.browserLabel = `${browser.label}${headless ? " Headless" : ""}`;
-    this.context = await chromium.launchPersistentContext(this.options.profileDir, {
-      executablePath: browser.executablePath,
-      headless,
-      viewport: { width: 1100, height: 780 },
-    });
+    const launch = (profileDir: string) => chromium.launchPersistentContext(profileDir, {
+        executablePath: browser.executablePath,
+        headless,
+        viewport: { width: 1100, height: 780 },
+      });
+    let runtimeProfileDir = this.options.profileDir;
+    try {
+      if (
+        this.options.cloneProfileWhenLocked &&
+        await fs.lstat(path.join(this.options.profileDir, "SingletonLock"))
+          .then(() => true)
+          .catch(() => false)
+      ) {
+        const clone = await cloneInstagramProfile(this.options.profileDir);
+        runtimeProfileDir = clone.profileDir;
+        this.temporaryProfileDir = clone.cleanupDir;
+        this.browserLabel = `${this.browserLabel} · shared session`;
+      }
+      try {
+        this.context = await launch(runtimeProfileDir);
+      } catch (error) {
+        if (
+          !this.options.cloneProfileWhenLocked ||
+          runtimeProfileDir !== this.options.profileDir ||
+          !isInstagramProfileLockError(error)
+        ) throw error;
+        const clone = await cloneInstagramProfile(this.options.profileDir);
+        runtimeProfileDir = clone.profileDir;
+        this.temporaryProfileDir = clone.cleanupDir;
+        this.browserLabel = `${this.browserLabel} · shared session`;
+        this.context = await launch(runtimeProfileDir);
+      }
+    } catch (error) {
+      await this.removeTemporaryProfile();
+      const detail = error instanceof Error ? error.message : String(error);
+      this.updateSnapshot({ ...this.snapshot, state: "error", detail });
+      throw error;
+    }
     if (this.stopped) {
       await this.context.close();
       this.context = undefined;
+      await this.removeTemporaryProfile();
       return;
     }
 
-    this.page = this.context.pages()[0] ?? (await this.context.newPage());
-    await this.installWakeSignals(this.page);
-    await this.page.goto(INBOX_URL, { waitUntil: "domcontentloaded" });
-    this.scheduleRefresh("startup", 0);
+    try {
+      this.page = this.context.pages()[0] ?? (await this.context.newPage());
+      await this.installWakeSignals(this.page);
+      await this.page.goto(INBOX_URL, { waitUntil: "domcontentloaded" });
+      this.scheduleRefresh("startup", 0);
+    } catch (error) {
+      await this.context.close().catch(() => undefined);
+      this.context = undefined;
+      this.page = undefined;
+      await this.removeTemporaryProfile();
+      const detail = error instanceof Error ? error.message : String(error);
+      this.updateSnapshot({ ...this.snapshot, state: "error", detail });
+      throw error;
+    }
   }
 
-  public async stop(): Promise<void> {
+  public stop(): Promise<void> {
+    this.desiredRunning = false;
     this.stopped = true;
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     this.refreshTimer = undefined;
-    await this.context?.close();
-    this.context = undefined;
-    this.page = undefined;
+    return this.enqueueLifecycle(async () => {
+      // React can immediately mount the same connector again after an effect
+      // cleanup. In that case the newest intent wins and the live browser must
+      // not be torn down underneath an already populated conversation list.
+      if (this.desiredRunning) return;
+      await this.context?.close();
+      this.context = undefined;
+      this.page = undefined;
+      await this.removeTemporaryProfile();
+    });
+  }
+
+  private enqueueLifecycle(task: () => Promise<void>): Promise<void> {
+    const pending = this.lifecycleQueue.then(task, task);
+    this.lifecycleQueue = pending.catch(() => undefined);
+    return pending;
+  }
+
+  private async removeTemporaryProfile(): Promise<void> {
+    const temporaryProfileDir = this.temporaryProfileDir;
+    this.temporaryProfileDir = undefined;
+    if (temporaryProfileDir) {
+      await fs.rm(temporaryProfileDir, { recursive: true, force: true });
+    }
   }
 
   public async openConversation(id: string): Promise<void> {
-    const page = this.requirePage();
+    const page = await this.requireReadyPage();
     const conversation = this.snapshot.conversations.find((item) => item.id === id);
     if (!conversation) throw new Error(`대화를 찾을 수 없습니다: ${id}`);
     const previousOverride = this.activeConversationOverride;
@@ -835,7 +949,7 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
   }
 
   public async sendMessage(text: string): Promise<void> {
-    const page = this.requirePage();
+    const page = await this.requireReadyPage();
     const message = text.trim();
     if (!message) return;
     this.readingOlderWindow = false;
@@ -885,8 +999,25 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
   }
 
   private requirePage(): Page {
-    if (!this.page) throw new Error("Instagram 커넥터가 시작되지 않았습니다.");
-    return this.page;
+    const page = this.getUsablePage();
+    if (!page) {
+      throw new Error("Instagram 커넥터가 시작되지 않았습니다.");
+    }
+    return page;
+  }
+
+  private async requireReadyPage(): Promise<Page> {
+    const page = this.getUsablePage();
+    if (page) return page;
+    await this.start();
+    return this.requirePage();
+  }
+
+  private getUsablePage(): Page | undefined {
+    const page = this.page;
+    if (!page) return undefined;
+    const isClosed = (page as Page & { isClosed?: () => boolean }).isClosed;
+    return typeof isClosed !== "function" || !isClosed.call(page) ? page : undefined;
   }
 
   private async installWakeSignals(page: Page): Promise<void> {
@@ -1310,7 +1441,10 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
                 groupSender &&
                 groupLines.length >= 2 &&
                 groupSender !== text &&
-                groupSender.length <= 80
+                groupSender.length <= 80 &&
+                !/^(?:new messages?|unread messages?|새(?:로운)? 메시지|읽지 않은 메시지)$/i.test(groupSender) &&
+                !/^(?:(?:(?:19|20)\d{2}\.\s*)?\d{1,2}\.\s*\d{1,2}\.\s*|\([월화수목금토일]\)\s*|(?:오늘|어제)\s*)?(?:오전|오후)\s*\d{1,2}:\d{2}$/.test(groupSender) &&
+                !/^(?:(?:today|yesterday)(?:\s+at)?\s+|(?:(?:mon|tue|wed|thu|fri|sat|sun)(?:day)?),?\s+)?\d{1,2}:\d{2}\s*(?:am|pm)$/i.test(groupSender)
               ) {
                 sender = groupSender;
                 senderSource = "display";
@@ -1348,7 +1482,10 @@ export class InstagramWebConnector extends EventEmitter implements ChatConnector
                   lines.length >= (detectedMediaKind ? 1 : 2) &&
                   candidate &&
                   candidate !== text &&
-                  candidate.length <= 80
+                  candidate.length <= 80 &&
+                  !/^(?:new messages?|unread messages?|새(?:로운)? 메시지|읽지 않은 메시지)$/i.test(candidate) &&
+                  !/^(?:(?:(?:19|20)\d{2}\.\s*)?\d{1,2}\.\s*\d{1,2}\.\s*|\([월화수목금토일]\)\s*|(?:오늘|어제)\s*)?(?:오전|오후)\s*\d{1,2}:\d{2}$/.test(candidate) &&
+                  !/^(?:(?:today|yesterday)(?:\s+at)?\s+|(?:(?:mon|tue|wed|thu|fri|sat|sun)(?:day)?),?\s+)?\d{1,2}:\d{2}\s*(?:am|pm)$/i.test(candidate)
                 ) {
                   sender = candidate;
                   senderSource = "display";

@@ -41,6 +41,7 @@ export class KakaoNativeConnector extends EventEmitter implements ChatConnector 
   private activeTitle?: string;
   private loadingOlder = false;
   private sending = false;
+  private openingConversation = false;
   private stopped = false;
   private pendingOwnTexts: string[] = [];
   private snapshot: ChatSnapshot = {
@@ -107,34 +108,41 @@ export class KakaoNativeConnector extends EventEmitter implements ChatConnector 
   }
 
   public async openConversation(id: string): Promise<void> {
-    const row = this.rowById.get(id);
-    const conversation = this.snapshot.conversations.find((item) => item.id === id);
-    if (!row || !conversation) throw new Error("KakaoTalk 대화방을 찾을 수 없습니다.");
-    const point = await this.actionBridge.request<NativePoint>("prepareOpen", {
-      row,
-      title: conversation.title,
-    });
-    if (!point.alreadyOpen) {
-      await this.actionBridge.request("doubleClick", { x: point.x, y: point.y });
-      await this.actionBridge.request("waitForWindow", { title: conversation.title });
+    this.openingConversation = true;
+    try {
+      // The read bridge scrolls the real KakaoTalk list while collecting rows.
+      // Never let prepareOpen race that traversal or its cached row can point
+      // at a different room by the time the click is delivered.
+      await this.refreshPromise?.catch(() => undefined);
+      const row = this.rowById.get(id);
+      const conversation = this.snapshot.conversations.find((item) => item.id === id);
+      if (!row || !conversation) throw new Error("KakaoTalk 대화방을 찾을 수 없습니다.");
+      const point = await this.actionBridge.request<NativePoint>("prepareOpen", {
+        row,
+        title: conversation.title,
+      });
+      if (!point.alreadyOpen) {
+        await this.actionBridge.request("doubleClick", { x: point.x, y: point.y });
+        await this.actionBridge.request("waitForWindow", { title: conversation.title });
+      }
+      this.activeConversationId = id;
+      this.activeTitle = conversation.title;
+      this.update({
+        ...this.snapshot,
+        state: "connected",
+        activeConversationId: id,
+        messages: this.history.get(id) ?? [],
+        detail: "KakaoTalk native · Accessibility",
+      });
+      // Resolve and cache the composer controls while the user is reading the
+      // room, rather than making their first send pay for a full AX tree walk.
+      void this.actionBridge
+        .request("prepareComposer", { title: conversation.title })
+        .catch(() => undefined);
+    } finally {
+      this.openingConversation = false;
     }
-    this.activeConversationId = id;
-    this.activeTitle = conversation.title;
-    this.update({
-      ...this.snapshot,
-      state: "connected",
-      activeConversationId: id,
-      messages: this.history.get(id) ?? [],
-      detail: "KakaoTalk native · Accessibility",
-    });
-    // Resolve and cache the composer controls while the user is reading the
-    // room, rather than making their first send pay for a full AX tree walk.
-    void this.actionBridge
-      .request("prepareComposer", { title: conversation.title })
-      .catch(() => undefined);
-    const inFlightRefresh = this.refreshPromise;
-    void (inFlightRefresh ? inFlightRefresh.catch(() => undefined) : Promise.resolve())
-      .then(() => this.refresh());
+    void this.refresh();
   }
 
   public async sendMessage(text: string): Promise<void> {
@@ -206,7 +214,7 @@ export class KakaoNativeConnector extends EventEmitter implements ChatConnector 
   }
 
   private async performRefresh(): Promise<void> {
-    if (this.stopped || this.sending) return;
+    if (this.stopped || this.sending || this.openingConversation) return;
     try {
       let conversations = this.snapshot.conversations;
       if (

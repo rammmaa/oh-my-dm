@@ -209,6 +209,21 @@ test("Instagram 프로필과 메시지 라벨에서 발신자 이름만 추출�
   assert.equal(normalizeSenderLabel("이정민님이 故추whw만함님에게 보낸 답장"), "이정민");
   assert.equal(normalizeSenderLabel("2026. 8. 25. 오전 11:15"), undefined);
   assert.equal(normalizeSenderLabel("어제 오후 9:19"), undefined);
+  assert.equal(normalizeSenderLabel("오전 9:20"), undefined);
+  assert.equal(normalizeSenderLabel("오전 9:20: 잘해먹노ㅠㅠㅜㅠ"), undefined);
+  assert.equal(normalizeSenderLabel("(수) 오후 10:16"), undefined);
+  assert.equal(normalizeSenderLabel("9:20 AM"), undefined);
+  assert.equal(normalizeSenderLabel("New messages"), undefined);
+  assert.equal(normalizeSenderLabel("새 메시지"), undefined);
+});
+
+test("시간으로 시작하는 Instagram 접근성 라벨은 발신자로 파싱하지 않는다", () => {
+  const message = normalizeMessage(
+    "thread-time-label",
+    { text: "잘해먹노ㅠㅠㅜㅠ", sender: null, ariaLabel: "오전 9:20: 잘해먹노ㅠㅠㅜㅠ" },
+    0,
+  );
+  assert.equal(message?.sender, "unknown");
 });
 
 test("프로필 이미지 라벨을 정규화해 메시지 발신자로 사용한다", () => {

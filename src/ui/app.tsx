@@ -51,9 +51,12 @@ interface AppProps {
   initialModelId?: string;
   initialModelEffort?: string;
   initialLanguage?: LanguagePreference;
+  availableUpdateVersion?: string;
+  onAutoUpdate?: () => Promise<void>;
   onThemeChange?: (themeId: string) => void | Promise<void>;
   onModelChange?: (modelId: string, effort?: ModelEffort) => void | Promise<void>;
   onLanguageChange?: (language: LanguagePreference) => void | Promise<void>;
+  onUpdate?: () => void;
 }
 
 type ConversationFilter = "all" | "unread";
@@ -63,15 +66,20 @@ type TranscriptItem =
   | { id: string; kind: "signature"; full: boolean }
   | { id: string; kind: "message"; message: ChatSnapshot["messages"][number] };
 
+const PROJECT_URL = "https://github.com/stacking-money-forever/oh-my-dm";
+
 export function App({
   connector,
   initialThemeId,
   initialModelId,
   initialModelEffort,
   initialLanguage = "auto",
+  availableUpdateVersion,
+  onAutoUpdate,
   onThemeChange,
   onModelChange,
   onLanguageChange,
+  onUpdate,
 }: AppProps) {
   const { exit, suspendTerminal } = useApp();
   const { stdout, write } = useStdout();
@@ -86,6 +94,7 @@ export function App({
   const [inputEpoch, setInputEpoch] = useState(0);
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
+  const [updateInstalled, setUpdateInstalled] = useState(false);
   const [messagesHidden, setMessagesHidden] = useState(false);
   const [workspaceCleared, setWorkspaceCleared] = useState(false);
   const [messageOffset, setMessageOffset] = useState(0);
@@ -117,6 +126,7 @@ export function App({
   const historyAlternateScreen = useRef(false);
   const commandAlternateScreen = useRef(false);
   const previousTerminalSize = useRef(terminalSize);
+  const autoUpdateStarted = useRef(false);
   const theme = getTheme(themeId);
   const displayModel = getDisplayModel(modelId);
   const displayModelLabel = formatDisplayModel(displayModel, modelEffort);
@@ -132,10 +142,21 @@ export function App({
     Math.min(8, Math.floor((terminalSize.rows - 14) / 2)),
   );
   const showSignature = terminalSize.columns >= 48;
-  const signatureExtraRows = (showSignature ? 2 : 0) + 1;
+  const signatureContentWidth = Math.max(1, terminalSize.columns - 2);
+  const signatureCtaRows = showSignature
+    ? wrapTerminalLines(copy.starPrompt, signatureContentWidth).length +
+      wrapTerminalLines(PROJECT_URL, signatureContentWidth).length
+    : 1;
+  const updateNotice = availableUpdateVersion
+    ? updateInstalled ? copy.updateInstalled : copy.updateAvailable
+    : undefined;
+  const signatureRenderedRows = (showSignature ? 4 : 2) + 1 + signatureCtaRows;
+  const signatureExtraRows = signatureRenderedRows - 1;
   const pathFooterVisible = viewMode === "chat" || viewMode === "history";
   const pathFooterReservedRows = pathFooterVisible ? 1 : 0;
   const staticHeaderRows = viewMode === "history" ? 0 : signatureExtraRows;
+  // The update notice occupies the composer's normal one-row top margin, so it
+  // must not reserve another terminal row or the footer leaves a blank line.
   const baseChromeRows = viewMode === "history" ? 5 : 6;
   const commandChromeRows = viewMode === "history" ? 8 : 9;
   const mainHeight = Math.max(
@@ -153,7 +174,13 @@ export function App({
   const transcriptRows = useMemo(
     () =>
       transcript.reduce((rows, item) => {
-        if (item.kind === "signature") return rows + (item.full ? 4 : 2);
+        if (item.kind === "signature") {
+          const ctaRows = item.full
+            ? wrapTerminalLines(copy.starPrompt, signatureContentWidth).length +
+              wrapTerminalLines(PROJECT_URL, signatureContentWidth).length
+            : 1;
+          return rows + (item.full ? 4 : 2) + 1 + ctaRows;
+        }
         const messageText = formatMessageText(item.message, language).replaceAll("\n", " ");
         const messageRows =
           item.message.sender === "나"
@@ -166,7 +193,7 @@ export function App({
               );
         return rows + messageRows + 1;
       }, 0),
-    [language, messageContentWidth, transcript],
+    [copy.starPrompt, language, messageContentWidth, signatureContentWidth, transcript],
   );
   const messageWindow = useMemo(
     () =>
@@ -261,6 +288,22 @@ export function App({
       void connector.stop();
     };
   }, [connector]);
+
+  useEffect(() => {
+    if (!availableUpdateVersion || !onAutoUpdate || autoUpdateStarted.current) return;
+    autoUpdateStarted.current = true;
+    let active = true;
+    void onAutoUpdate()
+      .then(() => {
+        if (active) setUpdateInstalled(true);
+      })
+      .catch(() => {
+        // Keep "Update available" visible so the user can retry with /update.
+      });
+    return () => {
+      active = false;
+    };
+  }, [availableUpdateVersion, onAutoUpdate]);
 
   useEffect(() => {
     if (viewMode === "history" || !historyAlternateScreen.current) return;
@@ -681,7 +724,8 @@ export function App({
   const commandPanelRows = commandMode
     ? 3 + Math.max(1, commandWindow.items.length)
     : 0;
-  const chatChromeRows = 4 + footerRows + commandPanelRows + (error ? 1 : 0);
+  const chatChromeRows =
+    4 + footerRows + commandPanelRows + (error ? 1 : 0);
   const chatSpacerHeight = Math.max(
     0,
     terminalSize.rows -
@@ -695,7 +739,8 @@ export function App({
     if (nextCommandMode && !commandAlternateScreen.current && viewMode === "chat") {
       const nextMatches = filterSlashCommands(nextInput, language);
       const nextPanelRows = 3 + Math.max(1, Math.min(commandWindowSize, nextMatches.length));
-      const nextChromeRows = 4 + footerRows + nextPanelRows + (error ? 1 : 0);
+      const nextChromeRows =
+        4 + footerRows + nextPanelRows + (error ? 1 : 0);
       if (transcriptRows + nextChromeRows > terminalSize.rows) {
         // Once Static content has filled the viewport, opening an inline palette
         // scrolls the primary buffer. It cannot be pulled back when the palette
@@ -853,6 +898,11 @@ export function App({
         await connector.refresh();
         setNotice(copy.refreshed);
         return;
+      case "update":
+        leaveHistoryScreenImmediately();
+        onUpdate?.();
+        exit();
+        return;
       case "clear":
         // Static output has already been committed to terminal scrollback. Reset both
         // Ink's static buffer and the terminal's visible screen/scrollback buffer.
@@ -944,11 +994,20 @@ export function App({
                   <Text color={theme.accent}>{" > ^ <  "}</Text>
                   <Text color={theme.muted}>  local · ephemeral</Text>
                 </Text>
+                <Text> </Text>
+                <Text color={theme.muted} wrap="wrap">{copy.starPrompt}</Text>
+                <Text color={theme.path} wrap="wrap">{PROJECT_URL}</Text>
               </Box>
             ) : (
-              <Box key={item.id} marginTop={1} paddingX={1}>
-                <Text bold color={theme.accent}>oh-my-dm</Text>
-                <Text color={theme.muted}> v{APP_VERSION}</Text>
+              <Box key={item.id} flexDirection="column" marginTop={1} paddingX={1}>
+                <Text>
+                  <Text bold color={theme.accent}>oh-my-dm</Text>
+                  <Text color={theme.muted}> v{APP_VERSION}</Text>
+                </Text>
+                <Text> </Text>
+                <Text color={theme.muted}>
+                  {truncateToWidth(`⭐ ${PROJECT_URL.replace("https://", "")}`, signatureContentWidth)}
+                </Text>
               </Box>
             );
           }
@@ -1272,8 +1331,16 @@ export function App({
         </Box>
       )}
 
+      {updateNotice && (
+        <Box paddingX={1} justifyContent="flex-end">
+          <Text bold color={theme.accent}>
+            {truncateToWidth(updateNotice, Math.max(1, terminalSize.columns - 2))}
+          </Text>
+        </Box>
+      )}
+
       <Box
-        marginTop={1}
+        marginTop={updateNotice ? 0 : 1}
         borderStyle="round"
         borderColor={commandMode ? theme.command : theme.border}
         paddingX={1}

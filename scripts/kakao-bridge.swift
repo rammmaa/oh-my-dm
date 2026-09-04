@@ -202,10 +202,21 @@ final class KakaoAccessibility {
       try setAttribute(scrollBar, kAXValueAttribute as CFString, NSNumber(value: 0))
     }
     usleep(350_000)
-    let selectedRow = rows[row - 1]
-    guard let cell = children(of: selectedRow).first else { throw BridgeError.message("KakaoTalk 대화 행을 읽지 못했습니다.") }
-    let actualTitle = descendants(of: cell, matching: kAXStaticTextRole as String).first.map(title) ?? ""
-    guard actualTitle == expectedTitle else {
+    // KakaoTalk virtualizes and may reorder row objects while scrolling. Read
+    // the AX rows again, then resolve the exact title from the current tree;
+    // never click a stale coordinate that now belongs to another room.
+    let refreshedRows = children(of: table).filter { role(of: $0) == kAXRowRole as String }
+    let expectedIndex = row - 1
+    let indexedCell = expectedIndex < refreshedRows.count ? children(of: refreshedRows[expectedIndex]).first : nil
+    let indexedTitle = indexedCell.flatMap {
+      descendants(of: $0, matching: kAXStaticTextRole as String).first.map(title)
+    } ?? ""
+    let matchingCell = indexedTitle == expectedTitle ? indexedCell : refreshedRows.compactMap {
+      children(of: $0).first
+    }.first {
+      descendants(of: $0, matching: kAXStaticTextRole as String).first.map(title) == expectedTitle
+    }
+    guard let cell = matchingCell else {
       throw BridgeError.message("KakaoTalk 대화 순서가 변경되었습니다. 다시 시도해주세요.")
     }
     guard let cellPosition = position(of: cell), let cellSize = size(of: cell) else {

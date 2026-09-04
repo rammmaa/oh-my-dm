@@ -27,6 +27,9 @@ export function resolveLanguage(
 const COPY = {
   ko: {
     selectConversation: "대화를 선택하세요",
+    starPrompt: "⭐ 스타 한 번씩만 눌러주시면 개발자에게 큰 도움이 됩니다.",
+    updateAvailable: "✔ Update available",
+    updateInstalled: "✔ Update installed · Restart to update",
     openingConversation: (title: string) => `${title} 대화를 여는 중…`,
     loadingOlder: "이전 메시지를 불러오는 중…",
     loadedOlder: (count: number) => `이전 메시지 ${count}개를 불러왔습니다.`,
@@ -78,6 +81,9 @@ const COPY = {
   },
   en: {
     selectConversation: "Select a conversation",
+    starPrompt: "⭐ A GitHub star is a huge help to the developer.",
+    updateAvailable: "✔ Update available",
+    updateInstalled: "✔ Update installed · Restart to update",
     openingConversation: (title: string) => `Opening ${title}…`,
     loadingOlder: "Loading older messages…",
     loadedOlder: (count: number) => `Loaded ${count} older message${count === 1 ? "" : "s"}.`,
