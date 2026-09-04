@@ -120,6 +120,7 @@ test("브라우저에서 DM 행, 서버 행, 채널 행, 사용자 정보를 읽
   await page.setContent(`
     <nav data-list-id="guildsnav">
       <div data-list-item-id="guildsnav___home" role="treeitem"></div>
+      <div data-list-item-id="guildsnav___create-join-button" role="treeitem"></div>
       <div class="listItem_a">
         <div data-dnd-name="술코"><div data-list-item-id="guildsnav___1538517028644855818" role="treeitem"></div></div>
         <div class="pill_a"><span class="unread_b"></span></div>
@@ -189,7 +190,7 @@ test("브라우저에서 메시지 행을 읽는다", async (t) => {
       <div class="wrapper_x"><h1>#잡담에 오신 것을 환영합니다</h1></div>
       <div class="divider_x" role="separator">2026년 8월 30일</div>
       <li id="chat-messages-9-10"><div class="message_x groupStart_x">
-        <h3><span id="message-username-10"><span class="username_x">Zyø</span></span><time datetime="2026-08-16T11:59:18.000Z">오후 8:59</time></h3>
+        <h3><span id="message-username-10" class="headerText_x"><span class="username_x">Zyø</span><span><span class="copyOnlyText_x"> [PS], </span><span class="clanTagChiplet_x">서버 태그: PSPS</span></span></span><time datetime="2026-08-16T11:59:18.000Z">오후 8:59</time></h3>
         <div id="message-content-10">안녕 <img class="emoji" alt="😀"> 여러분<br>둘째 줄<span class="edited_x">(수정됨)</span></div>
       </div></li>
       <li id="chat-messages-9-11"><div class="message_x">

@@ -123,9 +123,13 @@ export class DiscordWebConnector extends EventEmitter implements ChatConnector {
     const headless = this.options.headless ?? true;
     const browser = resolveBrowserExecutable();
     this.browserLabel = `${browser.label}${headless ? " Headless" : ""}`;
+    // Discord keeps its session in localStorage, which Chromium only flushes
+    // to disk on a clean shutdown. Leave SIGINT to the CLI so `login discord`
+    // can close the context gracefully instead of letting Playwright kill it.
     const launch = (profileDir: string) => chromium.launchPersistentContext(profileDir, {
       executablePath: browser.executablePath,
       headless,
+      handleSIGINT: false,
       viewport: { width: 1100, height: 780 },
     });
     let runtimeProfileDir = this.options.profileDir;

@@ -213,7 +213,8 @@ export function readDiscordDmRows(elements: Element[]): RawDiscordDmRow[] {
 export function readDiscordGuildRows(elements: Element[]): RawDiscordGuildRow[] {
   return elements.flatMap((element) => {
     const id = (element.getAttribute("data-list-item-id") ?? "").replace(/^guildsnav___/, "");
-    if (!id || id === "home") return [];
+    // Skip "home" and the add/discover/download buttons that share the list.
+    if (!/^\d+$/.test(id)) return [];
     const node = element as HTMLElement;
     const named =
       node.closest<HTMLElement>("[data-dnd-name]") ??
@@ -386,7 +387,10 @@ export function readDiscordMessageRows(
                   ? "image"
                   : "text";
 
-    const usernameNode = node.querySelector<HTMLElement>('[id^="message-username-"]');
+    // The header span also carries a server tag chiplet ("서버 태그: PSPS");
+    // only the inner username element holds the display name.
+    const headerNode = node.querySelector<HTMLElement>('[id^="message-username-"]');
+    const usernameNode = headerNode?.querySelector<HTMLElement>('[class*="username"]') ?? headerNode;
     const timeNode = node.querySelector("time[datetime]");
     const replyQuoteNode = replyContext?.querySelector<HTMLElement>('[id^="message-content-"]');
     const replyText = replyQuoteNode?.textContent?.replaceAll(" ", " ").trim();
