@@ -1,11 +1,12 @@
 import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 
 import { chromium, type BrowserContext, type Page } from "playwright-core";
 
+import { cloneBrowserProfile, isProfileLockError } from "../browser/profile.js";
 import { resolveBrowserExecutable } from "../browser/resolve-browser.js";
+import { observeDomChanges } from "../browser/wake-signals.js";
 import type {
   ChatConnector,
   ChatMessage,
@@ -428,27 +429,13 @@ export interface InstagramWebOptions {
   cloneProfileWhenLocked?: boolean;
 }
 
-export function isInstagramProfileLockError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /ProcessSingleton|profile (?:appears to be|is) in use|user data directory is already in use/i.test(message);
-}
+export const isInstagramProfileLockError = isProfileLockError;
 
-export async function cloneInstagramProfile(
+export function cloneInstagramProfile(
   sourceProfileDir: string,
-  temporaryRoot = os.tmpdir(),
+  temporaryRoot?: string,
 ): Promise<{ profileDir: string; cleanupDir: string }> {
-  const cleanupDir = await fs.mkdtemp(path.join(temporaryRoot, "oh-my-dm-instagram-"));
-  const profileDir = path.join(cleanupDir, "profile");
-  try {
-    await fs.cp(sourceProfileDir, profileDir, {
-      recursive: true,
-      filter: (source) => !path.basename(source).startsWith("Singleton"),
-    });
-    return { profileDir, cleanupDir };
-  } catch (error) {
-    await fs.rm(cleanupDir, { recursive: true, force: true });
-    throw error;
-  }
+  return cloneBrowserProfile(sourceProfileDir, temporaryRoot, "oh-my-dm-instagram-");
 }
 
 export interface InstagramDirectThreadIdentity {
@@ -1605,46 +1592,7 @@ function normalizeComparableText(value: string): string {
   return value.replaceAll("\u00a0", " ").replace(/\s+/g, " ").trim();
 }
 
-export function observeInstagramChanges(): void {
-  const key = "__ohMyDmObserverInstalled";
-  const browserWindow = window as typeof window & Record<string, unknown>;
-  if (browserWindow[key]) return;
-  browserWindow[key] = true;
-
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => {
-      if (!document.body) return;
-      new MutationObserver(() => {
-        if (timer) clearTimeout(timer);
-        timer = setTimeout(() => {
-          const callback = browserWindow.__ohMyDmWake;
-          if (typeof callback === "function") void callback();
-        }, 120);
-      }).observe(document.body, {
-        subtree: true,
-        childList: true,
-        characterData: true,
-        attributes: true,
-        attributeFilter: ["aria-label", "aria-live", "href"],
-      });
-    }, { once: true });
-  } else if (document.body) {
-    new MutationObserver(() => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        const callback = browserWindow.__ohMyDmWake;
-        if (typeof callback === "function") void callback();
-      }, 120);
-    }).observe(document.body, {
-      subtree: true,
-      childList: true,
-      characterData: true,
-      attributes: true,
-      attributeFilter: ["aria-label", "aria-live", "href"],
-    });
-  }
-}
+export const observeInstagramChanges = observeDomChanges;
 
 function dedupeConversations(items: Conversation[]): Conversation[] {
   return [...new Map(items.map((item) => [item.id, item])).values()];
