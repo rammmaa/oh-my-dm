@@ -46,3 +46,15 @@ test("메시지를 입력하기 시작하면 composer 단축키 안내를 숨긴
   assert.equal(shouldShowComposerHints(80, "메시지 입력 중"), false);
   assert.equal(shouldShowComposerHints(71, ""), false);
 });
+
+test("connector가 세 개면 탭 폭을 라벨 길이로 계산한다", () => {
+  const labels = ["Instagram", "KakaoTalk", "Discord"];
+  const regular = getConversationLayout(80, labels);
+  assert.equal(regular.compactTabs, false);
+  assert.equal(regular.tabsWidth, 37);
+
+  const compact = getConversationLayout(40, labels);
+  assert.equal(compact.compactTabs, true);
+  assert.equal(compact.tabsWidth, 15);
+  assert.ok(compact.pathWidth + compact.tabsWidth <= compact.contentWidth);
+});

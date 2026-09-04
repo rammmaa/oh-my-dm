@@ -25,3 +25,14 @@ test("language preferences and copy are available in Korean and English", () => 
   assert.equal(getCopy("ko").updateInstalled, "✔ Update installed · Restart to update");
   assert.equal(getCopy("en").updateInstalled, "✔ Update installed · Restart to update");
 });
+
+test("로그인 안내 문구는 connector 이름과 provider id를 받는다", () => {
+  assert.equal(
+    getCopy("ko").loginRequired("Discord", "discord"),
+    "Discord 로그인이 필요합니다. `oh-my-dm login discord`를 실행하세요.",
+  );
+  assert.equal(
+    getCopy("en").loginRequired("Discord", "discord"),
+    "Discord login required. Run `oh-my-dm login discord`.",
+  );
+});

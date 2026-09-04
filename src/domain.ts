@@ -58,6 +58,7 @@ export interface ConnectorStatus {
   label: string;
   state: ConnectionState;
   detail?: string;
+  source?: string;
 }
 
 export interface ConnectorEvents {

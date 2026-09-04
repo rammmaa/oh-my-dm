@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Static, Text, useApp, useInput, useStdout } from "ink";
 import stringWidth from "string-width";
 import wrapAnsi from "wrap-ansi";
 
-import type { ChatConnector, ChatSnapshot, Conversation } from "../domain.js";
+import type { ChatConnector, ChatSnapshot, ConnectorStatus, Conversation } from "../domain.js";
 import { formatMessagePreview, formatMessageText } from "../message-content.js";
 import { APP_VERSION } from "../version.js";
 import { getMessageWindow, getOlderMessageOffset } from "./message-window.js";
@@ -17,7 +17,7 @@ import {
   wrapSelectionIndex,
 } from "./slash-commands.js";
 import {
-  CONNECTOR_COLORS,
+  connectorColor,
   DEFAULT_THEME_ID,
   findTheme,
   getTheme,
@@ -65,13 +65,16 @@ interface AppProps {
 }
 
 type ConversationFilter = "all" | "unread";
-type ConversationProvider = "instagram" | "kakaotalk";
 type ViewMode = "chat" | "history" | "conversations" | "connectors" | "model" | "effort" | "theme" | "language";
 type TranscriptItem =
   | { id: string; kind: "signature"; full: boolean }
   | { id: string; kind: "message"; message: ChatSnapshot["messages"][number] };
 
 const PROJECT_URL = "https://github.com/stacking-money-forever/oh-my-dm";
+
+function providerMark(label: string): string {
+  return [...label][0]?.toUpperCase() ?? "?";
+}
 
 export function App({
   connector,
@@ -93,7 +96,9 @@ export function App({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [commandIndex, setCommandIndex] = useState(0);
   const [conversationFilter, setConversationFilter] = useState<ConversationFilter>("all");
-  const [conversationProvider, setConversationProvider] = useState<ConversationProvider>("instagram");
+  const [conversationProvider, setConversationProvider] = useState<string>(
+    () => connector.getSnapshot().connectors?.[0]?.id ?? "instagram",
+  );
   const [viewMode, setViewMode] = useState<ViewMode>("chat");
   const [input, setInput] = useState("");
   const [inputEpoch, setInputEpoch] = useState(0);
@@ -174,7 +179,18 @@ export function App({
   );
   const visibleMessageCount = Math.max(1, mainHeight - 4);
   const messageContentWidth = Math.max(1, terminalSize.columns - 2);
-  const conversationLayout = getConversationLayout(terminalSize.columns);
+  const connectorList = useMemo<ConnectorStatus[]>(
+    () =>
+      snapshot.connectors?.length
+        ? snapshot.connectors
+        : [{ id: "instagram", label: "Instagram", state: snapshot.state, detail: snapshot.detail }],
+    [snapshot.connectors, snapshot.detail, snapshot.state],
+  );
+  const defaultProviderId = connectorList[0]?.id ?? "instagram";
+  const conversationLayout = getConversationLayout(
+    terminalSize.columns,
+    connectorList.map((item) => item.label),
+  );
   const conversationContentWidth = conversationLayout.contentWidth;
   const transcriptRows = useMemo(
     () =>
@@ -229,13 +245,13 @@ export function App({
   const conversations = useMemo(
     () =>
       snapshot.conversations.filter((conversation) => {
-        const provider = conversation.provider ?? "instagram";
+        const provider = conversation.provider ?? defaultProviderId;
         return (
           provider === conversationProvider &&
           (conversationFilter === "all" || conversation.unread)
         );
       }),
-    [conversationFilter, conversationProvider, snapshot.conversations],
+    [conversationFilter, conversationProvider, defaultProviderId, snapshot.conversations],
   );
   const conversationWindow = useMemo(
     // The fixed-height box spends two rows on its border and one on the
@@ -655,9 +671,12 @@ export function App({
       viewMode === "conversations" &&
       (key.tab || key.leftArrow || key.rightArrow)
     ) {
-      setConversationProvider((provider) =>
-        provider === "instagram" ? "kakaotalk" : "instagram",
-      );
+      const providerIds = connectorList.map((item) => item.id);
+      setConversationProvider((provider) => {
+        const index = Math.max(0, providerIds.indexOf(provider));
+        const step = key.leftArrow ? -1 : 1;
+        return providerIds[(index + step + providerIds.length) % providerIds.length] ?? provider;
+      });
       setSelectedIndex(0);
       return;
     }
@@ -714,7 +733,7 @@ export function App({
     [snapshot, workspaceCleared],
   );
   const activeTitle = activeConversation?.title ?? copy.selectConversation;
-  const activeProvider = activeConversation?.provider ?? "instagram";
+  const activeProvider = activeConversation?.provider ?? defaultProviderId;
   const activePath =
     !activeConversation
       ? "~/conversations"
@@ -812,7 +831,7 @@ export function App({
       case "conversations":
         await connector.refresh();
         setConversationFilter("all");
-        setConversationProvider("instagram");
+        setConversationProvider(defaultProviderId);
         setViewMode("conversations");
         setSelectedIndex(0);
         setNotice(copy.conversationsNotice);
@@ -1111,35 +1130,28 @@ export function App({
                 </Box>
               )}
               <Box width={conversationTabsWidth} flexShrink={0} justifyContent="flex-end">
-                <Text
-                  bold={conversationProvider === "instagram"}
-                  color={conversationProvider === "instagram" ? "#000000" : theme.muted}
-                  backgroundColor={
-                    conversationProvider === "instagram"
-                      ? CONNECTOR_COLORS.instagram
-                      : undefined
-                  }
-                >
-                  {useCompactConversationTabs ? " I " : " Instagram "}
-                </Text>
-                <Text color={theme.muted}> │ </Text>
-                <Text
-                  bold={conversationProvider === "kakaotalk"}
-                  color={conversationProvider === "kakaotalk" ? "#000000" : theme.muted}
-                  backgroundColor={
-                    conversationProvider === "kakaotalk"
-                      ? CONNECTOR_COLORS.kakaotalk
-                      : undefined
-                  }
-                >
-                  {useCompactConversationTabs ? " K " : " KakaoTalk "}
-                </Text>
+                {connectorList.map((item, index) => (
+                  <Fragment key={item.id}>
+                    {index > 0 && <Text color={theme.muted}> │ </Text>}
+                    <Text
+                      bold={conversationProvider === item.id}
+                      color={conversationProvider === item.id ? "#000000" : theme.muted}
+                      backgroundColor={
+                        conversationProvider === item.id
+                          ? connectorColor(item.id, theme.accent)
+                          : undefined
+                      }
+                    >
+                      {useCompactConversationTabs ? ` ${providerMark(item.label)} ` : ` ${item.label} `}
+                    </Text>
+                  </Fragment>
+                ))}
               </Box>
             </Box>
             {conversations.length === 0 ? (
               <Text color={theme.muted}>
-                {conversationProvider === "instagram" && conversationConnector?.state === "login-required"
-                  ? copy.instagramLoginRequired
+                {conversationConnector?.state === "login-required"
+                  ? copy.loginRequired(conversationConnector.label, conversationConnector.id)
                   : conversationFilter === "unread"
                   ? copy.noUnread
                   : copy.waitingConversations}
@@ -1150,11 +1162,10 @@ export function App({
                 const selected = absoluteIndex === selectedIndex;
                 const selectionMark = selected ? "> " : "  ";
                 const unreadMark = conversation.unread ? " ●" : "  ";
-                const isKakaoTalk = conversation.provider === "kakaotalk";
-                const providerMark = isKakaoTalk ? "K" : "I";
-                const providerColor = isKakaoTalk
-                  ? CONNECTOR_COLORS.kakaotalk
-                  : CONNECTOR_COLORS.instagram;
+                const providerId = conversation.provider ?? defaultProviderId;
+                const providerLabel =
+                  connectorList.find((item) => item.id === providerId)?.label ?? providerId;
+                const providerColor = connectorColor(providerId, theme.accent);
                 const titleCellWidth = Math.max(1, conversationTitleWidth - 1);
                 const title = truncateToWidth(
                   conversation.title,
@@ -1175,7 +1186,7 @@ export function App({
                       </Text>
                     </Box>
                     <Box width={1} flexShrink={0}>
-                      <Text color={providerColor}>{providerMark}</Text>
+                      <Text color={providerColor}>{providerMark(providerLabel)}</Text>
                     </Box>
                     <Box width={2} flexShrink={0}>
                       <Text color={conversation.unread ? theme.accent : undefined}>
@@ -1201,9 +1212,7 @@ export function App({
             <Text color={theme.muted}>{snapshot.connectors?.length ?? 1} connectors</Text>
             <Box marginTop={1} flexDirection="column">
               <Text color={theme.muted}>{copy.chatConnectors}</Text>
-              {(snapshot.connectors ?? [
-                { id: "instagram", label: "Instagram", state: snapshot.state, detail: snapshot.detail },
-              ]).map((connectorStatus, index) => (
+              {connectorList.map((connectorStatus, index) => (
                 <Box key={connectorStatus.id} flexDirection="column" marginTop={index === 0 ? 0 : 1}>
                   <Text>
                     <Text color={theme.accent}>❯ </Text>
@@ -1215,7 +1224,7 @@ export function App({
                   </Text>
                   <Box marginLeft={3} flexDirection="column">
                     <Text color={theme.muted}>
-                      source      {connectorStatus.id === "instagram" ? "instagram.com/direct · live DOM + WebSocket" : "KakaoTalk for macOS · persistent native bridge"}
+                      source      {connectorStatus.source ?? "—"}
                     </Text>
                     <Text color={theme.muted}>storage     {copy.storage}</Text>
                     {connectorStatus.detail && <Text color={theme.muted}>detail      {connectorStatus.detail}</Text>}

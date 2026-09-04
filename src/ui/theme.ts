@@ -18,7 +18,12 @@ export interface UiTheme {
 export const CONNECTOR_COLORS = {
   instagram: "#E1306C",
   kakaotalk: "#FEE500",
+  discord: "#5865F2",
 } as const;
+
+export function connectorColor(id: string, fallback: string): string {
+  return (CONNECTOR_COLORS as Record<string, string | undefined>)[id] ?? fallback;
+}
 
 export const UI_THEMES: UiTheme[] = [
   {

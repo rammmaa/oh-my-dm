@@ -80,8 +80,18 @@ if (provider !== "instagram" && command !== "chat") {
     cloneProfileWhenLocked: true,
   });
   const connector = new UnifiedChatConnector([
-    { id: "instagram", label: "Instagram", connector: instagram },
-    { id: "kakaotalk", label: "KakaoTalk", connector: new KakaoNativeConnector() },
+    {
+      id: "instagram",
+      label: "Instagram",
+      source: "instagram.com/direct · live DOM + WebSocket",
+      connector: instagram,
+    },
+    {
+      id: "kakaotalk",
+      label: "KakaoTalk",
+      source: "KakaoTalk for macOS · persistent native bridge",
+      connector: new KakaoNativeConnector(),
+    },
   ]);
   const app = render(
     <App

@@ -82,3 +82,15 @@ test("여러 connector의 대화방 id를 구분하고 선택한 provider로 전
   assert.equal(instagram.conversationLoads, 1);
   assert.equal(kakao.conversationLoads, 0);
 });
+
+test("entry의 source를 connector 상태에 전달한다", async () => {
+  const fake = new FakeConnector({ state: "connected", conversations: [], messages: [] });
+  const unified = new UnifiedChatConnector([
+    { id: "discord", label: "Discord", source: "discord.com/channels", connector: fake },
+    { id: "kakaotalk", label: "KakaoTalk", connector: fake },
+  ]);
+  await unified.start();
+  const statuses = unified.getSnapshot().connectors ?? [];
+  assert.equal(statuses[0]?.source, "discord.com/channels");
+  assert.equal("source" in (statuses[1] ?? {}), false);
+});

@@ -10,6 +10,7 @@ import type {
 export interface ConnectorEntry {
   id: string;
   label: string;
+  source?: string;
   connector: ChatConnector;
 }
 
@@ -88,7 +89,13 @@ export class UnifiedChatConnector extends EventEmitter implements ChatConnector 
   private rebuildSnapshot(): void {
     const connectors: ConnectorStatus[] = this.entries.map((entry) => {
       const snapshot = this.snapshots.get(entry.id)!;
-      return { id: entry.id, label: entry.label, state: snapshot.state, detail: snapshot.detail };
+      return {
+        id: entry.id,
+        label: entry.label,
+        state: snapshot.state,
+        detail: snapshot.detail,
+        ...(entry.source ? { source: entry.source } : {}),
+      };
     });
     const conversations: Conversation[] = this.entries.flatMap((entry) =>
       (this.snapshots.get(entry.id)?.conversations ?? []).map((conversation) => ({
