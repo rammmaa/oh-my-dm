@@ -5,6 +5,7 @@ import stringWidth from "string-width";
 import {
   getConversationLayout,
   padToWidth,
+  shouldShowComposerHints,
   truncateToWidth,
 } from "../src/ui/text-layout.js";
 
@@ -38,4 +39,10 @@ test("아주 좁은 화면에서는 connector 탭을 축약한다", () => {
   assert.equal(compact.tabsWidth, 9);
   assert.equal(regular.compactTabs, false);
   assert.equal(regular.tabsWidth, 25);
+});
+
+test("메시지를 입력하기 시작하면 composer 단축키 안내를 숨긴다", () => {
+  assert.equal(shouldShowComposerHints(80, ""), true);
+  assert.equal(shouldShowComposerHints(80, "메시지 입력 중"), false);
+  assert.equal(shouldShowComposerHints(71, ""), false);
 });

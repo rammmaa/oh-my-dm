@@ -21,6 +21,10 @@ export function padToWidth(value: string, width: number): string {
   return truncated + " ".repeat(Math.max(0, width - stringWidth(truncated)));
 }
 
+export function shouldShowComposerHints(terminalColumns: number, input: string): boolean {
+  return terminalColumns >= 72 && input.length === 0;
+}
+
 export interface ConversationLayout {
   contentWidth: number;
   pathWidth: number;

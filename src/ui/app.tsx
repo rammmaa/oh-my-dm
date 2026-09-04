@@ -34,7 +34,12 @@ import {
   type DisplayModel,
   type ModelEffort,
 } from "./model.js";
-import { getConversationLayout, padToWidth, truncateToWidth } from "./text-layout.js";
+import {
+  getConversationLayout,
+  padToWidth,
+  shouldShowComposerHints,
+  truncateToWidth,
+} from "./text-layout.js";
 import { formatUserMessageLines } from "./user-message.js";
 import { ImeTextInput } from "./ime-text-input.js";
 import {
@@ -257,7 +262,7 @@ export function App({
     [languageIndex, mainHeight],
   );
   const showConversationPreview = conversationLayout.showPreview;
-  const showComposerHints = terminalSize.columns >= 72;
+  const showComposerHints = shouldShowComposerHints(terminalSize.columns, input);
   const useCompactConversationTabs = conversationLayout.compactTabs;
   const conversationTabsWidth = conversationLayout.tabsWidth;
   const conversationPathWidth = conversationLayout.pathWidth;
@@ -1027,7 +1032,7 @@ export function App({
           ) : (
             <Box key={item.id} marginTop={1} paddingX={1}>
               <Text wrap="wrap">
-                <Text bold>{item.message.sender}: </Text>
+                <Text>{item.message.sender}: </Text>
                 {messageText}
               </Text>
             </Box>
