@@ -283,6 +283,29 @@ export function readDiscordChannelRows(elements: Element[]): RawDiscordChannelRo
   });
 }
 
+// Read the name of the channel or thread that is currently open. Used for
+// pinned channels that never appear in the sidebar list (forum posts), so the
+// list can show a real name instead of a raw id. Runs inside evaluate, so it
+// stays self-contained with no imports or named inner functions.
+export function readDiscordOpenChannelName(): string | null {
+  const composer = document.querySelector('[data-slate-editor="true"]');
+  const composerLabel = composer?.getAttribute("aria-label") ?? "";
+  let name = composerLabel
+    .replace(/^Message\s+/i, "")
+    .replace(/에 메시지 보내기$/u, "")
+    .trim()
+    .replace(/^#/, "")
+    .trim();
+  if (!name) {
+    const title = (document.title || "")
+      .replace(/^\(\d+\)\s*/, "")
+      .replace(/\s*[|-]\s*Discord\s*$/i, "")
+      .trim();
+    name = (title.split(" | ")[0] ?? title).replace(/^#/, "").trim();
+  }
+  return name || null;
+}
+
 // The channel sidebar is a <nav aria-label="술코 (서버)">.
 export function readDiscordSidebarGuildName(element: Element): string | null {
   const label = element.closest("nav")?.getAttribute("aria-label") ?? null;

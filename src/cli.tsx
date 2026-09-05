@@ -5,7 +5,7 @@ import { render } from "ink";
 import React from "react";
 
 import { resolveBrowserExecutable } from "./browser/resolve-browser.js";
-import { getAppPaths, parseProviderList } from "./config.js";
+import { getAppPaths, parseDiscordChannelPins, parseProviderList } from "./config.js";
 import { DiscordWebConnector } from "./connectors/discord-web.js";
 import { InstagramWebConnector } from "./connectors/instagram-web.js";
 import { KakaoNativeConnector } from "./connectors/kakao-native.js";
@@ -18,6 +18,7 @@ import { checkForUpdate, installLatestVersion } from "./update.js";
 import { APP_VERSION } from "./version.js";
 
 const paths = getAppPaths();
+const discordChannelPins = parseDiscordChannelPins(process.env.OH_MY_DM_DISCORD_CHANNELS);
 const [command = "chat", provider = "instagram"] = process.argv.slice(2);
 
 const WEB_PROVIDERS = {
@@ -41,7 +42,7 @@ function createWebConnector(
 ): ChatConnector {
   const options = { profileDir: profileDirFor(webProvider), headless, cloneProfileWhenLocked };
   return webProvider === "discord"
-    ? new DiscordWebConnector(options)
+    ? new DiscordWebConnector({ ...options, pinnedChannels: discordChannelPins })
     : new InstagramWebConnector(options);
 }
 
@@ -56,7 +57,7 @@ const cliText = cliLanguage === "ko" ? {
   logout: (label: string) => `${label} 전용 브라우저 프로필을 삭제했습니다.`,
   updating: "oh-my-dm을 최신 버전으로 업데이트합니다…",
   updated: "업데이트가 완료됐습니다. oh-my-dm을 다시 실행하세요.",
-  help: `사용법:\n  oh-my-dm                  TUI 실행\n  oh-my-dm login instagram  Instagram 로그인 세션 생성\n  oh-my-dm login discord    Discord 로그인 세션 생성\n  oh-my-dm update           최신 버전 설치\n  oh-my-dm doctor           로컬 설정 확인\n  oh-my-dm logout instagram Instagram 로그인 세션 삭제\n  oh-my-dm logout discord   Discord 로그인 세션 삭제\n\n옵션:\n  --headed                   디버깅용 브라우저 창 표시\n\n환경 변수:\n  OH_MY_DM_PROVIDERS         켤 connector를 쉼표로 지정 (예: discord)`,
+  help: `사용법:\n  oh-my-dm                  TUI 실행\n  oh-my-dm login instagram  Instagram 로그인 세션 생성\n  oh-my-dm login discord    Discord 로그인 세션 생성\n  oh-my-dm update           최신 버전 설치\n  oh-my-dm doctor           로컬 설정 확인\n  oh-my-dm logout instagram Instagram 로그인 세션 삭제\n  oh-my-dm logout discord   Discord 로그인 세션 삭제\n\n옵션:\n  --headed                   디버깅용 브라우저 창 표시\n\n환경 변수:\n  OH_MY_DM_PROVIDERS         켤 connector를 쉼표로 지정 (예: discord)\n  OH_MY_DM_DISCORD_CHANNELS  목록에 없는 Discord 채널·스레드를 URL이나 서버id/채널id로 추가`,
 } : {
   unsupportedProvider: (value: string) => `Unsupported provider: ${value}`,
   login: "Opening Playwright Chromium for login. When finished, press Ctrl+C to exit.",
@@ -64,7 +65,7 @@ const cliText = cliLanguage === "ko" ? {
   logout: (label: string) => `Deleted the dedicated ${label} browser profile.`,
   updating: "Updating oh-my-dm to the latest version…",
   updated: "Update complete. Restart oh-my-dm.",
-  help: `Usage:\n  oh-my-dm                  Start the TUI\n  oh-my-dm login instagram  Create an Instagram login session\n  oh-my-dm login discord    Create a Discord login session\n  oh-my-dm update           Install the latest version\n  oh-my-dm doctor           Check the local setup\n  oh-my-dm logout instagram Delete the Instagram login session\n  oh-my-dm logout discord   Delete the Discord login session\n\nOptions:\n  --headed                   Show the browser window for debugging\n\nEnvironment:\n  OH_MY_DM_PROVIDERS         Comma-separated connectors to load (e.g. discord)`,
+  help: `Usage:\n  oh-my-dm                  Start the TUI\n  oh-my-dm login instagram  Create an Instagram login session\n  oh-my-dm login discord    Create a Discord login session\n  oh-my-dm update           Install the latest version\n  oh-my-dm doctor           Check the local setup\n  oh-my-dm logout instagram Delete the Instagram login session\n  oh-my-dm logout discord   Delete the Discord login session\n\nOptions:\n  --headed                   Show the browser window for debugging\n\nEnvironment:\n  OH_MY_DM_PROVIDERS         Comma-separated connectors to load (e.g. discord)\n  OH_MY_DM_DISCORD_CHANNELS  Pin Discord channels/threads by URL or guildId/channelId`,
 };
 let runtimeSettings = settings;
 let settingsSaveQueue = Promise.resolve();

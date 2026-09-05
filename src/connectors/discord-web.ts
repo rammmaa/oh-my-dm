@@ -26,10 +26,12 @@ import {
   readDiscordDmRows,
   readDiscordGuildRows,
   readDiscordMessageRows,
+  readDiscordOpenChannelName,
   readDiscordSidebarGuildName,
   updateDiscordConversations,
   type RawDiscordGuildRow,
 } from "./discord-dom.js";
+import type { DiscordChannelPin } from "../config.js";
 
 const DISCORD_ORIGIN = "https://discord.com";
 const HOME_URL = `${DISCORD_ORIGIN}/channels/@me`;
@@ -48,6 +50,9 @@ export interface DiscordWebOptions {
   profileDir: string;
   headless?: boolean;
   cloneProfileWhenLocked?: boolean;
+  // Channels or threads to add to the list even when the scan cannot find
+  // them, such as posts inside a forum channel. See parseDiscordChannelPins.
+  pinnedChannels?: DiscordChannelPin[];
 }
 
 export function isTransientDiscordNavigationError(error: unknown): boolean {
@@ -78,6 +83,8 @@ export class DiscordWebConnector extends EventEmitter implements ChatConnector {
   private guildOrder: string[] = [];
   private readonly guildNames = new Map<string, string>();
   private readonly guildConversations = new Map<string, Conversation[]>();
+  private readonly pinnedChannels: DiscordChannelPin[];
+  private readonly pinnedNames = new Map<string, string>();
   private guildScanState: "idle" | "running" | "done" = "idle";
   private guildScanDetail?: string;
   private loadingOlder = false;
@@ -91,6 +98,7 @@ export class DiscordWebConnector extends EventEmitter implements ChatConnector {
 
   public constructor(private readonly options: DiscordWebOptions) {
     super();
+    this.pinnedChannels = options.pinnedChannels ?? [];
   }
 
   public getSnapshot(): ChatSnapshot {
@@ -255,6 +263,7 @@ export class DiscordWebConnector extends EventEmitter implements ChatConnector {
       this.refreshTimer = undefined;
       while (this.refreshRunning) await page.waitForTimeout(25);
       await this.performRefresh();
+      await this.resolvePinnedName(page, id);
     } catch (error) {
       this.activeConversationId = previous;
       throw error;
@@ -566,10 +575,13 @@ export class DiscordWebConnector extends EventEmitter implements ChatConnector {
 
   private publishConnected(): void {
     if (this.stopped) return;
-    const conversations = [
+    const scanned = [
       ...this.dmConversations,
       ...this.guildOrder.flatMap((guildId) => this.guildConversations.get(guildId) ?? []),
     ];
+    const known = new Set(scanned.map((item) => item.id));
+    const pinned = this.buildPinnedConversations().filter((item) => !known.has(item.id));
+    const conversations = [...scanned, ...pinned];
     const activeId = this.activeConversationId;
     const scanNote = this.guildScanState !== "done"
       ? " · 서버 채널을 읽는 중"
@@ -585,6 +597,31 @@ export class DiscordWebConnector extends EventEmitter implements ChatConnector {
         ? `${this.browserLabel} · DOM + WebSocket 이벤트 감지 중${scanNote}`
         : `${this.browserLabel} · 대화 목록을 기다리는 중${scanNote}`,
     });
+  }
+
+  private buildPinnedConversations(): Conversation[] {
+    return this.pinnedChannels.map((pin) => {
+      const guild = (this.guildNames.get(pin.guildId) ?? "").trim();
+      const name = pin.label?.trim() || this.pinnedNames.get(pin.channelId) || `채널 ${pin.channelId}`;
+      return {
+        id: pin.channelId,
+        identity: `guild:${pin.guildId}`,
+        title: guild ? `${guild} #${name}` : `#${name}`,
+        href: `/channels/${pin.guildId}/${pin.channelId}`,
+        unread: false,
+      };
+    });
+  }
+
+  // A pinned forum post never appears in the sidebar, so its name can only be
+  // read while it is open. Do it once, unless the user gave an explicit label.
+  private async resolvePinnedName(page: Page, channelId: string): Promise<void> {
+    const pin = this.pinnedChannels.find((item) => item.channelId === channelId);
+    if (!pin || pin.label || this.pinnedNames.has(channelId)) return;
+    const name = await page
+      .evaluate(readDiscordOpenChannelName)
+      .catch(() => null);
+    if (name) this.pinnedNames.set(channelId, name);
   }
 
   private async readCurrentUser(page: Page): Promise<void> {
