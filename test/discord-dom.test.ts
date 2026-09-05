@@ -136,10 +136,15 @@ test("가상 스크롤 창에서 읽은 행으로 기존 목록의 순서를 유
   );
 });
 
-test("document.title에서 채널·스레드·포럼 이름을 뽑는다", () => {
+test("document.title에서 채널·스레드·포럼 이름을 언어와 무관하게 뽑는다", () => {
+  // Korean client
   assert.equal(parseDiscordTitleName("• Discord | #아파트 | 술코"), "아파트");
   assert.equal(parseDiscordTitleName('(1) Discord | "지호핑" | 술코'), "지호핑");
   assert.equal(parseDiscordTitleName("#잡담 | 술코"), "잡담");
+  // English client, brand at the front or the end
+  assert.equal(parseDiscordTitleName("Discord | #general | My Server"), "general");
+  assert.equal(parseDiscordTitleName('(3) Discord | "release plan" | My Server'), "release plan");
+  assert.equal(parseDiscordTitleName("#general | My Server - Discord"), "general");
   assert.equal(parseDiscordTitleName("Discord"), null);
   assert.equal(parseDiscordTitleName(""), null);
 });

@@ -124,11 +124,15 @@ export function normalizeDiscordChannelRow(
 // or thread, and "<name>" is wrapped in quotes for a thread or prefixed with
 // "#" for a channel/forum. Pull the clean name out of it.
 export function parseDiscordTitleName(title: string | null | undefined): string | null {
-  let value = (title ?? "").replaceAll(" ", " ").trim();
+  let value = (title ?? "").replaceAll("\u00a0", " ").trim();
   if (!value) return null;
-  value = value.replace(/^[•\s]*/, "").replace(/^\(\d+\)\s*/, "").trim();
-  const parts = value.split(" | ");
-  let name = (parts.length >= 3 ? parts[1] : parts[0]) ?? "";
+  // Drop an unread marker ("• ") or count ("(3) ") and the Discord brand,
+  // which can sit at the front ("Discord | …") or the end ("… - Discord").
+  value = value.replace(/^[\u2022\s]*/, "").replace(/^\(\d+\)\s*/, "").trim();
+  value = value.replace(/^Discord\s*\|\s*/, "").replace(/\s*[|-]\s*Discord\s*$/, "").trim();
+  // The channel or thread name is the first " | "-separated segment; a thread
+  // name is quoted and a channel name is prefixed with "#".
+  let name = (value.split(" | ")[0] ?? value).trim();
   name = name.replace(/^["\u201c\u201d']+|["\u201c\u201d']+$/g, "").replace(/^#/, "").trim();
   if (!name || name === "Discord") return null;
   return name;
@@ -325,30 +329,8 @@ export function readDiscordChannelRows(elements: Element[]): RawDiscordChannelRo
   });
 }
 
-// Read the name of the channel or thread that is currently open. Used for
-// pinned channels that never appear in the sidebar list (forum posts), so the
-// list can show a real name instead of a raw id. Runs inside evaluate, so it
-// stays self-contained with no imports or named inner functions.
-export function readDiscordOpenChannelName(): string | null {
-  const composer = document.querySelector('[data-slate-editor="true"]');
-  const composerLabel = composer?.getAttribute("aria-label") ?? "";
-  let name = composerLabel
-    .replace(/^Message\s+/i, "")
-    .replace(/에 메시지 보내기$/u, "")
-    .trim()
-    .replace(/^#/, "")
-    .trim();
-  if (!name) {
-    const title = (document.title || "")
-      .replace(/^\(\d+\)\s*/, "")
-      .replace(/\s*[|-]\s*Discord\s*$/i, "")
-      .trim();
-    name = (title.split(" | ")[0] ?? title).replace(/^#/, "").trim();
-  }
-  return name || null;
-}
-
-// The channel sidebar is a <nav aria-label="술코 (서버)">.
+// The channel sidebar is a <nav aria-label="술코 (서버)">; strip the trailing
+// "(server)" annotation regardless of language.
 export function readDiscordSidebarGuildName(element: Element): string | null {
   const label = element.closest("nav")?.getAttribute("aria-label") ?? null;
   if (!label) return null;

@@ -29,7 +29,6 @@ import {
   readDiscordGuildRows,
   readDiscordMessageRows,
   readDiscordForumPosts,
-  readDiscordOpenChannelName,
   readDiscordSidebarGuildName,
   updateDiscordConversations,
   type RawDiscordGuildRow,
@@ -661,9 +660,9 @@ export class DiscordWebConnector extends EventEmitter implements ChatConnector {
   private async resolvePinnedName(page: Page, channelId: string): Promise<void> {
     const pin = this.pinnedChannels.find((item) => item.channelId === channelId);
     if (!pin || pin.label || this.pinnedNames.has(channelId)) return;
-    const name = await page
-      .evaluate(readDiscordOpenChannelName)
-      .catch(() => null);
+    // The page title carries the channel or thread name in every locale, so it
+    // is a language-independent source unlike the composer placeholder.
+    const name = parseDiscordTitleName(await page.title().catch(() => ""));
     if (name) this.pinnedNames.set(channelId, name);
   }
 
