@@ -107,6 +107,22 @@ oh-my-dm logout instagram
 oh-my-dm logout discord
 ```
 
+### 커넥터 선택과 채널 핀
+
+두 환경 변수로 무엇을 켜고 무엇을 대화 목록에 넣을지 정합니다.
+
+- `OH_MY_DM_PROVIDERS`: 켤 커넥터를 쉼표로 지정합니다. 비워 두면 전부 켜집니다. 예를 들어 Discord만 쓰면 Instagram 브라우저와 KakaoTalk 브리지를 띄우지 않습니다.
+- `OH_MY_DM_DISCORD_CHANNELS`: 평소 목록에 뜨지 않는 Discord 채널, 스레드, 포럼을 목록에 추가합니다. 값은 채널 URL이나 `서버id/채널id`를 쉼표로 나열하며, 각 항목 뒤에 `=이름`으로 표시 이름을 지정할 수 있습니다. 포럼 채널을 넣으면 그 안의 글이 각각 `서버 #포럼 › 글제목`으로 펼쳐집니다.
+
+```bash
+# Discord만 켜고, 한 포럼의 글을 목록에 펼치기
+OH_MY_DM_PROVIDERS=discord \
+OH_MY_DM_DISCORD_CHANNELS="https://discord.com/channels/<서버id>/<포럼채널id>" \
+npm run dev
+```
+
+채널이나 포럼의 URL은 Discord에서 해당 항목을 오른쪽 클릭해 링크를 복사하면 얻을 수 있습니다.
+
 ### 플랫폼 및 콘텐츠 지원
 
 | Connector | 지원 범위 | 참고 |
@@ -311,6 +327,22 @@ oh-my-dm doctor
 oh-my-dm logout instagram
 oh-my-dm logout discord
 ```
+
+### Selecting connectors and pinning channels
+
+Two environment variables decide which connectors start and what shows up in the conversation list.
+
+- `OH_MY_DM_PROVIDERS`: a comma-separated list of connectors to load. Leave it empty to load all of them. Loading only Discord, for example, skips the Instagram browser and the KakaoTalk bridge.
+- `OH_MY_DM_DISCORD_CHANNELS`: adds Discord channels, threads, or forums that the normal scan does not list. Give a comma-separated list of channel URLs or `guildId/channelId` pairs, each with an optional `=Label` for the name shown in the list. Pin a forum channel and each of its posts appears as `<server> #<forum> › <post>`.
+
+```bash
+# Load only Discord and expand one forum's posts into the list
+OH_MY_DM_PROVIDERS=discord \
+OH_MY_DM_DISCORD_CHANNELS="https://discord.com/channels/<server-id>/<forum-channel-id>" \
+npm run dev
+```
+
+Copy a channel or forum URL by right-clicking the item in Discord and choosing Copy Link.
 
 ### Platform and content support
 
