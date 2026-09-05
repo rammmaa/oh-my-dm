@@ -19,13 +19,16 @@ import {
   mergeDiscordMessages,
   normalizeDiscordChannelRow,
   normalizeDiscordDmRow,
+  normalizeDiscordForumPost,
   normalizeDiscordMessages,
   parseDiscordRoute,
+  parseDiscordTitleName,
   readDiscordChannelRows,
   readDiscordCurrentUser,
   readDiscordDmRows,
   readDiscordGuildRows,
   readDiscordMessageRows,
+  readDiscordForumPosts,
   readDiscordOpenChannelName,
   readDiscordSidebarGuildName,
   updateDiscordConversations,
@@ -44,6 +47,7 @@ const MESSAGE_LIST_SELECTOR = 'ol[data-list-id="chat-messages"]';
 const MESSAGE_ROW_SELECTOR = `${MESSAGE_LIST_SELECTOR} li[id^="chat-messages-"]`;
 const COMPOSER_SELECTOR = '[role="textbox"][data-slate-editor="true"]';
 const CURRENT_USER_SELECTOR = '[class*="nameTag"]';
+const FORUM_POST_SELECTOR = '[data-item-id][class*="mainCard"]';
 const MAX_HISTORY = 500;
 
 export interface DiscordWebOptions {
@@ -85,6 +89,8 @@ export class DiscordWebConnector extends EventEmitter implements ChatConnector {
   private readonly guildConversations = new Map<string, Conversation[]>();
   private readonly pinnedChannels: DiscordChannelPin[];
   private readonly pinnedNames = new Map<string, string>();
+  // Forum channels expand into their posts, keyed by the forum channel id.
+  private readonly forumPosts = new Map<string, Conversation[]>();
   private guildScanState: "idle" | "running" | "done" = "idle";
   private guildScanDetail?: string;
   private loadingOlder = false;
@@ -600,17 +606,54 @@ export class DiscordWebConnector extends EventEmitter implements ChatConnector {
   }
 
   private buildPinnedConversations(): Conversation[] {
-    return this.pinnedChannels.map((pin) => {
+    return this.pinnedChannels.flatMap((pin) => {
+      const posts = this.forumPosts.get(pin.channelId);
+      if (posts && posts.length > 0) return posts;
       const guild = (this.guildNames.get(pin.guildId) ?? "").trim();
       const name = pin.label?.trim() || this.pinnedNames.get(pin.channelId) || `채널 ${pin.channelId}`;
-      return {
+      return [{
         id: pin.channelId,
         identity: `guild:${pin.guildId}`,
         title: guild ? `${guild} #${name}` : `#${name}`,
         href: `/channels/${pin.guildId}/${pin.channelId}`,
         unread: false,
-      };
+      }];
     });
+  }
+
+  // Visit each pinned channel once. A forum shows post cards and no message
+  // list, so expand it into its posts; anything else is a single conversation
+  // whose name is read from the page.
+  private async scanPinnedChannels(page: Page): Promise<void> {
+    for (const pin of this.pinnedChannels) {
+      if (this.stopped) return;
+      try {
+        await page.goto(`${DISCORD_ORIGIN}/channels/${pin.guildId}/${pin.channelId}`, {
+          waitUntil: "domcontentloaded",
+        });
+        await page
+          .locator(`${FORUM_POST_SELECTOR}, ${MESSAGE_LIST_SELECTOR}`)
+          .first()
+          .waitFor({ state: "attached", timeout: 6_000 })
+          .catch(() => undefined);
+        await page.waitForTimeout(300);
+        const rawPosts = await page.locator(FORUM_POST_SELECTOR).evaluateAll(readDiscordForumPosts);
+        if (rawPosts.length > 0) {
+          const guildName = this.guildNames.get(pin.guildId) ?? "";
+          const forumName = pin.label?.trim() || parseDiscordTitleName(await page.title()) || "";
+          const posts = rawPosts
+            .map((raw) => normalizeDiscordForumPost(raw, pin.guildId, guildName, forumName))
+            .filter((item): item is Conversation => item !== undefined);
+          this.forumPosts.set(pin.channelId, posts);
+        } else if (!pin.label && !this.pinnedNames.has(pin.channelId)) {
+          const name = parseDiscordTitleName(await page.title());
+          if (name) this.pinnedNames.set(pin.channelId, name);
+        }
+      } catch {
+        // Leave the pin as a plain entry if it cannot be read.
+      }
+      this.publishConnected();
+    }
   }
 
   // A pinned forum post never appears in the sidebar, so its name can only be
@@ -731,6 +774,9 @@ export class DiscordWebConnector extends EventEmitter implements ChatConnector {
           failed.push(guild.name || guild.id);
         }
         this.publishConnected();
+      }
+      if (this.pinnedChannels.length > 0 && !this.stopped) {
+        await this.scanPinnedChannels(scanPage);
       }
       this.guildScanDetail = failed.length ? `${failed.length}개 서버를 읽지 못함` : undefined;
     } catch (error) {

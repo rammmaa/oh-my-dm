@@ -28,6 +28,12 @@ export interface RawDiscordChannelRow {
   unread: boolean;
 }
 
+export interface RawDiscordForumPost {
+  id: string;
+  title: string;
+  unread: boolean;
+}
+
 export interface RawDiscordMessage {
   id: string;
   channelId: string;
@@ -110,6 +116,42 @@ export function normalizeDiscordChannelRow(
     identity: `guild:${match[1]}`,
     title: guild ? `${guild} #${channelName}` : `#${channelName}`,
     href: `/channels/${match[1]}/${match[2]}`,
+    unread: raw.unread,
+  };
+}
+
+// document.title reads "[•] [(N)] Discord | <name> | <server>" for a channel
+// or thread, and "<name>" is wrapped in quotes for a thread or prefixed with
+// "#" for a channel/forum. Pull the clean name out of it.
+export function parseDiscordTitleName(title: string | null | undefined): string | null {
+  let value = (title ?? "").replaceAll(" ", " ").trim();
+  if (!value) return null;
+  value = value.replace(/^[•\s]*/, "").replace(/^\(\d+\)\s*/, "").trim();
+  const parts = value.split(" | ");
+  let name = (parts.length >= 3 ? parts[1] : parts[0]) ?? "";
+  name = name.replace(/^["\u201c\u201d']+|["\u201c\u201d']+$/g, "").replace(/^#/, "").trim();
+  if (!name || name === "Discord") return null;
+  return name;
+}
+
+// A forum post is a thread, so its URL is a normal channel route and opening
+// and sending reuse the channel path. Only the flat-list title differs.
+export function normalizeDiscordForumPost(
+  raw: RawDiscordForumPost,
+  guildId: string,
+  guildName: string,
+  forumName: string,
+): Conversation | undefined {
+  if (!/^\d{15,}$/.test(raw.id)) return undefined;
+  const post = raw.title.trim() || `\uae00 ${raw.id}`;
+  const guild = guildName.trim();
+  const forum = forumName.trim();
+  const prefix = forum ? `${forum} \u203a ` : "";
+  return {
+    id: raw.id,
+    identity: `guild:${guildId}`,
+    title: guild ? `${guild} #${prefix}${post}` : `#${prefix}${post}`,
+    href: `/channels/${guildId}/${raw.id}`,
     unread: raw.unread,
   };
 }
@@ -312,6 +354,18 @@ export function readDiscordSidebarGuildName(element: Element): string | null {
   if (!label) return null;
   const stripped = label.replaceAll(" ", " ").replace(/\s*\([^()]*\)\s*$/, "").trim();
   return stripped || null;
+}
+
+export function readDiscordForumPosts(elements: Element[]): RawDiscordForumPost[] {
+  return elements.flatMap((element) => {
+    const id = element.getAttribute("data-item-id") ?? "";
+    if (!/^\d{15,}$/.test(id)) return [];
+    const node = element as HTMLElement;
+    const titleNode = node.querySelector<HTMLElement>('[class*="postTitle"]');
+    const title = (titleNode?.textContent ?? "").replaceAll(" ", " ").replace(/\s+/g, " ").trim();
+    const unread = Boolean(node.querySelector('[class*="hasUnreads"]'));
+    return [{ id, title, unread }];
+  });
 }
 
 export function readDiscordCurrentUser(element: Element): DiscordCurrentUser {

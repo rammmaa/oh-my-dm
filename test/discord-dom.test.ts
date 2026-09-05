@@ -11,9 +11,12 @@ import {
   mergeDiscordMessages,
   normalizeDiscordChannelRow,
   normalizeDiscordDmRow,
+  normalizeDiscordForumPost,
   normalizeDiscordMessages,
   parseDiscordRoute,
+  parseDiscordTitleName,
   readDiscordChannelRows,
+  readDiscordForumPosts,
   readDiscordCurrentUser,
   readDiscordDmRows,
   readDiscordGuildRows,
@@ -130,6 +133,42 @@ test("가상 스크롤 창에서 읽은 행으로 기존 목록의 순서를 유
   assert.deepEqual(
     updated.map((item) => [item.id, item.title, item.unread]),
     [["1", "a2", true], ["2", "b", false], ["3", "c", false], ["4", "d", true]],
+  );
+});
+
+test("document.title에서 채널·스레드·포럼 이름을 뽑는다", () => {
+  assert.equal(parseDiscordTitleName("• Discord | #아파트 | 술코"), "아파트");
+  assert.equal(parseDiscordTitleName('(1) Discord | "지호핑" | 술코'), "지호핑");
+  assert.equal(parseDiscordTitleName("#잡담 | 술코"), "잡담");
+  assert.equal(parseDiscordTitleName("Discord"), null);
+  assert.equal(parseDiscordTitleName(""), null);
+});
+
+test("포럼 글을 서버·포럼 이름을 붙인 대화로 만든다", () => {
+  assert.deepEqual(
+    normalizeDiscordForumPost(
+      { id: "1538517677239308318", title: "지호핑", unread: true },
+      "1538517028644855818",
+      "술코",
+      "아파트",
+    ),
+    {
+      id: "1538517677239308318",
+      identity: "guild:1538517028644855818",
+      title: "술코 #아파트 › 지호핑",
+      href: "/channels/1538517028644855818/1538517677239308318",
+      unread: true,
+    },
+  );
+  // No forum name falls back to just the post title.
+  assert.equal(
+    normalizeDiscordForumPost({ id: "111111111111111111", title: "rammmmi", unread: false }, "22222222222222222", "술코", "")?.title,
+    "술코 #rammmmi",
+  );
+  // A non-snowflake id is rejected.
+  assert.equal(
+    normalizeDiscordForumPost({ id: "x", title: "t", unread: false }, "22222222222222222", "술코", "아파트"),
+    undefined,
   );
 });
 
@@ -267,5 +306,29 @@ test("브라우저에서 메시지 행을 읽는다", async (t) => {
     { id: "13", channelId: "9", sender: null, own: true, timestamp: "2026-08-16T12:01:00.000Z", text: "하람님이 서버에 참여했습니다.", kind: "system", edited: false },
     { id: "14", channelId: "9", sender: "하람", own: true, timestamp: "2026-08-16T12:02:00.000Z", text: "내 메시지", kind: "text", edited: false },
     { id: "9990001", channelId: "9", sender: null, own: true, timestamp: "2026-08-16T12:02:05.000Z", text: "보내는 중", kind: "text", edited: false, pending: true },
+  ]);
+});
+
+test("브라우저에서 포럼 글 카드를 읽는다", async (t) => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage({ viewport: { width: 1100, height: 780 } });
+  await page.setContent(`
+    <div class="scroller_x">
+      <div class="mainCard_x header_x"><textarea placeholder="포스트 검색"></textarea></div>
+      <div data-item-id="1538517677239308318" class="container_x mainCard_x">
+        <h3 class="postTitleText_x"><span>지호핑</span></h3>
+        <span class="author_x hasUnreads_x">Zyø</span>
+      </div>
+      <div data-item-id="1538525722518364242" class="container_x mainCard_x">
+        <h3 class="postTitleText_x"><span>rammmmi</span></h3>
+        <span class="author_x">하람</span>
+      </div>
+    </div>
+  `);
+  const posts = await page.locator('[data-item-id][class*="mainCard"]').evaluateAll(readDiscordForumPosts);
+  assert.deepEqual(posts, [
+    { id: "1538517677239308318", title: "지호핑", unread: true },
+    { id: "1538525722518364242", title: "rammmmi", unread: false },
   ]);
 });
