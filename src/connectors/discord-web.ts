@@ -27,6 +27,7 @@ import {
   readDiscordGuildRows,
   readDiscordMessageRows,
   readDiscordSidebarGuildName,
+  updateDiscordConversations,
   type RawDiscordGuildRow,
 } from "./discord-dom.js";
 
@@ -35,6 +36,7 @@ const HOME_URL = `${DISCORD_ORIGIN}/channels/@me`;
 const DM_LIST_SELECTOR = '[data-list-id^="private-channels"]';
 const DM_ROW_SELECTOR = `${DM_LIST_SELECTOR} a[href^="/channels/@me/"]`;
 const GUILD_ROW_SELECTOR = '[data-list-item-id^="guildsnav___"]';
+const GUILD_HOME_SELECTOR = '[data-list-item-id="guildsnav___home"]';
 const CHANNEL_ROW_SELECTOR = 'a[data-list-item-id^="channels___"]';
 const MESSAGE_LIST_SELECTOR = 'ol[data-list-id="chat-messages"]';
 const MESSAGE_ROW_SELECTOR = `${MESSAGE_LIST_SELECTOR} li[id^="chat-messages-"]`;
@@ -130,7 +132,9 @@ export class DiscordWebConnector extends EventEmitter implements ChatConnector {
       executablePath: browser.executablePath,
       headless,
       handleSIGINT: false,
-      viewport: { width: 1100, height: 780 },
+      // Discord virtualizes its channel and message lists, so a tall headless
+      // viewport keeps more rows in the DOM. Headed windows stay screen-sized.
+      viewport: headless ? { width: 1100, height: 2400 } : { width: 1100, height: 780 },
     });
     let runtimeProfileDir = this.options.profileDir;
     try {
@@ -210,8 +214,8 @@ export class DiscordWebConnector extends EventEmitter implements ChatConnector {
     return pending;
   }
 
-  // Navigation and user actions share one page. Serialize them so a guild
-  // scan step never navigates away in the middle of a send or open.
+  // Navigation and user actions share one page. Serialize them so an open
+  // never navigates away in the middle of a send or a history load.
   private withPageLock<T>(task: () => Promise<T>): Promise<T> {
     const run = this.pageLock.then(task, task);
     this.pageLock = run.then(() => undefined, () => undefined);
@@ -238,12 +242,12 @@ export class DiscordWebConnector extends EventEmitter implements ChatConnector {
     try {
       await this.withPageLock(async () => {
         if (parseDiscordRoute(page.url()).channelId !== id) {
-          await page.goto(`${DISCORD_ORIGIN}${conversation.href}`, { waitUntil: "domcontentloaded" });
+          await this.navigateToConversation(page, conversation);
         }
         await page
           .locator(`${MESSAGE_LIST_SELECTOR} li[id^="chat-messages-${id}-"]`)
           .first()
-          .waitFor({ state: "attached", timeout: 3_000 })
+          .waitFor({ state: "attached", timeout: 6_000 })
           .catch(() => undefined);
       });
       this.dmListScrolled = false;
@@ -269,7 +273,7 @@ export class DiscordWebConnector extends EventEmitter implements ChatConnector {
       if (parseDiscordRoute(page.url()).channelId !== channelId) {
         const conversation = this.snapshot.conversations.find((item) => item.id === channelId);
         if (!conversation) throw new Error(`대화를 찾을 수 없습니다: ${channelId}`);
-        await page.goto(`${DISCORD_ORIGIN}${conversation.href}`, { waitUntil: "domcontentloaded" });
+        await this.navigateToConversation(page, conversation);
       }
       // The composer is a Slate editor, which ignores locator.fill(). Type
       // through the keyboard instead so Discord sees real input events.
@@ -373,6 +377,66 @@ export class DiscordWebConnector extends EventEmitter implements ChatConnector {
     });
   }
 
+  // In-app navigation keeps the gateway session and renders a channel within
+  // a few hundred milliseconds, while a full page load reboots the app and
+  // takes several seconds. Fall back to a page load when the rows needed for
+  // clicking are not in the DOM (collapsed categories, virtualized DM rows).
+  private async navigateToConversation(page: Page, conversation: Conversation): Promise<void> {
+    const target = parseDiscordRoute(conversation.href);
+    const clicked = target.channelId
+      ? await this.clickConversationRow(page, conversation.href, target.guildId, target.channelId)
+      : false;
+    if (!clicked) {
+      await page.goto(`${DISCORD_ORIGIN}${conversation.href}`, { waitUntil: "domcontentloaded" });
+    }
+  }
+
+  private async clickConversationRow(
+    page: Page,
+    href: string,
+    guildId: string | undefined,
+    channelId: string,
+  ): Promise<boolean> {
+    try {
+      const current = parseDiscordRoute(page.url());
+      if (current.login) return false;
+      if (current.guildId !== guildId) {
+        const guildSelector = guildId
+          ? `[data-list-item-id="guildsnav___${guildId}"]`
+          : GUILD_HOME_SELECTOR;
+        await page.locator(guildSelector).first().click({ timeout: 1_000 });
+      }
+      const row = page
+        .locator(guildId ? `a[data-list-item-id="channels___${channelId}"]` : `${DM_LIST_SELECTOR} a[href="${href}"]`)
+        .first();
+      await row.waitFor({ state: "attached", timeout: 1_500 });
+      await row.click({ timeout: 1_000 });
+      await page.waitForURL((url) => parseDiscordRoute(url.href).channelId === channelId, { timeout: 2_000 });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // Show a server's channel list, preferring an in-app click over a reload.
+  private async showGuild(page: Page, guildId: string): Promise<void> {
+    const clicked = await page
+      .locator(`[data-list-item-id="guildsnav___${guildId}"]`)
+      .first()
+      .click({ timeout: 1_000 })
+      .then(() => true, () => false);
+    const routed = clicked && await page
+      .waitForURL((url) => parseDiscordRoute(url.href).guildId === guildId, { timeout: 2_000 })
+      .then(() => true, () => false);
+    if (!routed) {
+      await page.goto(`${DISCORD_ORIGIN}/channels/${guildId}`, { waitUntil: "domcontentloaded" });
+    }
+    await page
+      .locator(`a[href^="/channels/${guildId}/"]`)
+      .first()
+      .waitFor({ state: "attached", timeout: 4_000 });
+  }
+
   private requirePage(): Page {
     const page = this.getUsablePage();
     if (!page) throw new Error("Discord 커넥터가 시작되지 않았습니다.");
@@ -454,21 +518,23 @@ export class DiscordWebConnector extends EventEmitter implements ChatConnector {
           // was scrolled to load more rows, in which case the virtualized top
           // rows are missing and the captured order must be preserved.
           this.dmConversations = this.dmListScrolled
-            ? mergeDiscordConversations(this.dmConversations, incoming)
+            ? updateDiscordConversations(this.dmConversations, incoming)
             : mergeDiscordConversations(incoming, this.dmConversations);
         }
-      } else if (this.guildScanState === "done") {
-        await this.readGuildChannels(page, route.guildId);
+      } else {
+        // The main page has a normal viewport, so the virtualized channel
+        // list only shows a window. Refresh what is visible, keep the rest.
+        await this.readGuildChannels(page, route.guildId, "update");
       }
 
-      if (this.currentUserId && this.guildScanState === "idle") {
+      if (this.guildScanState === "idle") {
         this.guildScanState = "running";
         void this.scanGuilds();
       }
 
-      // Only the pinned conversation is ever treated as active. The guild
-      // scan navigates through channels Discord auto-opens, and those must
-      // not leak into the transcript.
+      // Only the pinned conversation is ever treated as active. Discord
+      // auto-opens a channel whenever a server is visited, and that must not
+      // leak into the transcript.
       const activeId = this.activeConversationId;
       if (activeId && route.channelId === activeId) {
         const incoming = await this.readVisibleMessages(page, activeId);
@@ -499,12 +565,13 @@ export class DiscordWebConnector extends EventEmitter implements ChatConnector {
   }
 
   private publishConnected(): void {
+    if (this.stopped) return;
     const conversations = [
       ...this.dmConversations,
       ...this.guildOrder.flatMap((guildId) => this.guildConversations.get(guildId) ?? []),
     ];
     const activeId = this.activeConversationId;
-    const scanNote = this.guildScanState === "running"
+    const scanNote = this.guildScanState !== "done"
       ? " · 서버 채널을 읽는 중"
       : this.guildScanDetail
         ? ` · ${this.guildScanDetail}`
@@ -536,7 +603,11 @@ export class DiscordWebConnector extends EventEmitter implements ChatConnector {
     return normalizeDiscordMessages(rows.filter((row) => row.channelId === channelId));
   }
 
-  private async readGuildChannels(page: Page, guildId: string): Promise<number> {
+  private async readGuildChannels(
+    page: Page,
+    guildId: string,
+    mode: "replace" | "update",
+  ): Promise<number> {
     const rows = await page.locator(CHANNEL_ROW_SELECTOR).evaluateAll(readDiscordChannelRows);
     const sidebarName = await page
       .locator(CHANNEL_ROW_SELECTOR)
@@ -549,7 +620,12 @@ export class DiscordWebConnector extends EventEmitter implements ChatConnector {
       .filter((row) => row.href.startsWith(`/channels/${guildId}/`))
       .map((row) => normalizeDiscordChannelRow(row, guildName))
       .filter((item): item is Conversation => item !== undefined);
-    if (conversations.length > 0 || !this.guildConversations.has(guildId)) {
+    if (mode === "update") {
+      this.guildConversations.set(
+        guildId,
+        updateDiscordConversations(this.guildConversations.get(guildId) ?? [], conversations),
+      );
+    } else if (conversations.length > 0 || !this.guildConversations.has(guildId)) {
       this.guildConversations.set(guildId, conversations);
     }
     return conversations.length;
@@ -575,46 +651,51 @@ export class DiscordWebConnector extends EventEmitter implements ChatConnector {
 
   // Discord only renders the channel list of the selected server, so the
   // flat conversation list is built by visiting each server once at startup.
+  // The scan runs in its own tab so the main page can stay on the active
+  // conversation and keep receiving live updates while servers are read.
   private async scanGuilds(): Promise<void> {
     const failed: string[] = [];
+    let scanPage: Page | undefined;
     try {
-      const guilds = await this.withPageLock(async () => this.readGuildList(this.requirePage()));
+      const context = this.context;
+      if (!context || this.stopped) return;
+      scanPage = await context.newPage();
+      // The channel sidebar is virtualized, so a tall viewport is the
+      // cheapest way to get every channel of a large server rendered at once.
+      await scanPage.setViewportSize({ width: 1100, height: 4000 });
+      await scanPage.goto(HOME_URL, { waitUntil: "domcontentloaded" });
+      // The server list renders its home and add buttons before the guild
+      // data arrives. Wait for the user panel, which appears once the app
+      // has booted, then give the guild rows a moment to show up.
+      await scanPage
+        .locator(CURRENT_USER_SELECTOR)
+        .first()
+        .waitFor({ state: "attached", timeout: 15_000 });
+      let guilds: RawDiscordGuildRow[] = [];
+      for (let attempt = 0; attempt < 10 && guilds.length === 0; attempt += 1) {
+        if (attempt > 0) await scanPage.waitForTimeout(300);
+        guilds = await this.readGuildList(scanPage);
+      }
       this.guildOrder = guilds.map((guild) => guild.id);
       for (const guild of guilds) {
         if (guild.name) this.guildNames.set(guild.id, guild.name);
       }
       for (const guild of guilds) {
         if (this.stopped) return;
-        await this.withPageLock(async () => {
-          const page = this.requirePage();
-          try {
-            await page.goto(`${DISCORD_ORIGIN}/channels/${guild.id}`, { waitUntil: "domcontentloaded" });
-            await page
-              .locator(`a[href^="/channels/${guild.id}/"]`)
-              .first()
-              .waitFor({ state: "attached", timeout: 4_000 });
-            await page.waitForTimeout(150);
-            await this.readGuildChannels(page, guild.id);
-          } catch {
-            failed.push(guild.name || guild.id);
-          }
-        });
+        try {
+          await this.showGuild(scanPage, guild.id);
+          await scanPage.waitForTimeout(150);
+          await this.readGuildChannels(scanPage, guild.id, "replace");
+        } catch {
+          failed.push(guild.name || guild.id);
+        }
         this.publishConnected();
       }
       this.guildScanDetail = failed.length ? `${failed.length}개 서버를 읽지 못함` : undefined;
-      await this.withPageLock(async () => {
-        if (this.stopped) return;
-        const page = this.requirePage();
-        const active = this.activeConversationId
-          ? this.snapshot.conversations.find((item) => item.id === this.activeConversationId)
-          : undefined;
-        await page.goto(active ? `${DISCORD_ORIGIN}${active.href}` : HOME_URL, {
-          waitUntil: "domcontentloaded",
-        });
-      });
     } catch (error) {
       this.guildScanDetail = error instanceof Error ? error.message : String(error);
     } finally {
+      await scanPage?.close().catch(() => undefined);
       this.guildScanState = "done";
       this.scheduleRefresh("guild-scan-done", 0);
     }

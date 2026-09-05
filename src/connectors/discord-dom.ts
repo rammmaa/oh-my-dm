@@ -96,7 +96,9 @@ export function normalizeDiscordChannelRow(
   const match = raw.href.match(/^\/channels\/(\d+)\/(\d+)/);
   if (!match) return undefined;
   if (!isTextChannelLabel(raw.label)) return undefined;
-  const channelName = titleFromDiscordLabel(raw.label, raw.name);
+  // The aria-label prefixes an unread channel with "읽지 않은", so prefer the
+  // visible name node, which always holds the channel's real name.
+  const channelName = raw.name.trim() || titleFromDiscordLabel(raw.label, raw.name);
   if (!channelName) return undefined;
   const guild = guildName.trim();
   return {
@@ -187,6 +189,22 @@ export function mergeDiscordConversations(
     merged.push(item);
   }
   return merged;
+}
+
+// Keep the established order, refresh the rows that are currently rendered,
+// and append rows seen for the first time. Used when a virtualized list only
+// shows a window of the rows already known.
+export function updateDiscordConversations(
+  existing: Conversation[],
+  incoming: Conversation[],
+): Conversation[] {
+  const fresh = new Map(incoming.map((item) => [item.id, item]));
+  const updated = existing.map((item) => fresh.get(item.id) ?? item);
+  const seen = new Set(existing.map((item) => item.id));
+  for (const item of incoming) {
+    if (!seen.has(item.id)) updated.push(item);
+  }
+  return updated;
 }
 
 // The readers below run inside Playwright evaluate callbacks. Keep them

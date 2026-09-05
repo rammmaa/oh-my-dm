@@ -20,6 +20,7 @@ import {
   readDiscordMessageRows,
   readDiscordSidebarGuildName,
   titleFromDiscordLabel,
+  updateDiscordConversations,
 } from "../src/connectors/discord-dom.js";
 
 test("Discord URL에서 guild id와 channel id를 읽는다", () => {
@@ -113,6 +114,25 @@ test("대화 목록은 앞 목록 순서를 지키고 뒤 목록의 새 항목�
   assert.deepEqual(merged.map((item) => [item.id, item.unread]), [["2", true], ["1", false], ["3", false]]);
 });
 
+test("가상 스크롤 창에서 읽은 행으로 기존 목록의 순서를 유지한 채 갱신한다", () => {
+  const updated = updateDiscordConversations(
+    [
+      { id: "1", title: "a", href: "/channels/9/1", unread: false },
+      { id: "2", title: "b", href: "/channels/9/2", unread: false },
+      { id: "3", title: "c", href: "/channels/9/3", unread: true },
+    ],
+    [
+      { id: "3", title: "c", href: "/channels/9/3", unread: false },
+      { id: "4", title: "d", href: "/channels/9/4", unread: true },
+      { id: "1", title: "a2", href: "/channels/9/1", unread: true },
+    ],
+  );
+  assert.deepEqual(
+    updated.map((item) => [item.id, item.title, item.unread]),
+    [["1", "a2", true], ["2", "b", false], ["3", "c", false], ["4", "d", true]],
+  );
+});
+
 test("브라우저에서 DM 행, 서버 행, 채널 행, 사용자 정보를 읽는다", async (t) => {
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
@@ -137,7 +157,7 @@ test("브라우저에서 DM 행, 서버 행, 채널 행, 사용자 정보를 읽
     <nav aria-label="술코 (서버)">
       <ul aria-label="채널">
         <li><a role="link" href="/channels/22/333" aria-label="잡담 (채팅 채널)" data-list-item-id="channels___333"><div class="name__x">잡담</div></a></li>
-        <li><a role="link" href="/channels/22/444" aria-label="공지 (채팅 채널)" data-list-item-id="channels___444"><div class="name__x modeUnread__y">공지</div></a></li>
+        <li><a role="link" href="/channels/22/444" aria-label="읽지 않은 공지 (채팅 채널)" data-list-item-id="channels___444"><div class="name__x modeUnread__y">공지</div></a></li>
         <li><a role="link" href="/channels/22/555" aria-label="라운지 (음성 채널)" data-list-item-id="channels___555"><div class="name__x">라운지</div></a></li>
       </ul>
     </nav>
@@ -167,9 +187,18 @@ test("브라우저에서 DM 행, 서버 행, 채널 행, 사용자 정보를 읽
   const channelRows = await page.locator('a[data-list-item-id^="channels___"]').evaluateAll(readDiscordChannelRows);
   assert.deepEqual(channelRows, [
     { href: "/channels/22/333", label: "잡담 (채팅 채널)", name: "잡담", unread: false },
-    { href: "/channels/22/444", label: "공지 (채팅 채널)", name: "공지", unread: true },
+    { href: "/channels/22/444", label: "읽지 않은 공지 (채팅 채널)", name: "공지", unread: true },
     { href: "/channels/22/555", label: "라운지 (음성 채널)", name: "라운지", unread: false },
   ]);
+  // The unread channel's aria-label starts with "읽지 않은"; the title must
+  // still be the clean channel name, and the voice channel must be dropped.
+  const normalizedChannels = channelRows
+    .map((row) => normalizeDiscordChannelRow(row, "술코"))
+    .filter((item) => item !== undefined);
+  assert.deepEqual(
+    normalizedChannels.map((item) => [item.title, item.unread]),
+    [["술코 #잡담", false], ["술코 #공지", true]],
+  );
 
   const user = await page.locator('[class*="nameTag"]').first().evaluate(readDiscordCurrentUser);
   assert.deepEqual(user, { id: "5638", displayName: "하람" });
