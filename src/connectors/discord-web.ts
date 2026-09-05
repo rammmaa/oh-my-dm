@@ -600,7 +600,11 @@ export class DiscordWebConnector extends EventEmitter implements ChatConnector {
     const rows = await page
       .locator(MESSAGE_ROW_SELECTOR)
       .evaluateAll(readDiscordMessageRows, this.currentUserId ?? null);
-    return normalizeDiscordMessages(rows.filter((row) => row.channelId === channelId));
+    // Drop optimistic rows still being sent; they reappear with their real id
+    // and would otherwise show the just-sent message twice.
+    return normalizeDiscordMessages(
+      rows.filter((row) => row.channelId === channelId && !row.pending),
+    );
   }
 
   private async readGuildChannels(

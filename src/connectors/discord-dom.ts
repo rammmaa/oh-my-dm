@@ -37,6 +37,10 @@ export interface RawDiscordMessage {
   text: string;
   kind: MessageKind;
   edited: boolean;
+  // True while Discord is still sending the message (optimistic render). Such
+  // a row carries a temporary id and is replaced by the real one once the
+  // server acks, so callers should drop it to avoid showing it twice.
+  pending?: boolean;
   replyTo?: MessageReference;
 }
 
@@ -329,6 +333,7 @@ export function readDiscordMessageRows(
     // thread ids. Everything shown to the user still comes from the DOM.
     let authorId: string | undefined;
     let messageType: number | undefined;
+    let messageState: string | undefined;
     const fiberKey = Object.keys(node).find((key) => key.startsWith("__reactFiber$"));
     let fiber = fiberKey
       ? (node as unknown as Record<string, {
@@ -338,11 +343,12 @@ export function readDiscordMessageRows(
       : undefined;
     for (let depth = 0; fiber && depth < 8; depth += 1) {
       const message = fiber.memoizedProps?.message as
-        | { author?: { id?: unknown }; type?: unknown }
+        | { author?: { id?: unknown }; type?: unknown; state?: unknown }
         | undefined;
       if (message && typeof message === "object") {
         if (message.author && message.author.id !== undefined) authorId = String(message.author.id);
         if (typeof message.type === "number") messageType = message.type;
+        if (typeof message.state === "string") messageState = message.state;
         break;
       }
       fiber = fiber.return as typeof fiber;
@@ -417,6 +423,9 @@ export function readDiscordMessageRows(
       ? replyUsernameNode.textContent ?? ""
       : (replyContext?.textContent ?? "").replace(replyText ?? "", "");
     const replySender = replySenderRaw.replaceAll(" ", " ").trim().replace(/^@/, "").trim();
+    // A received message has state "SENT" (or none). Anything else, such as
+    // "SENDING", is an optimistic row that will be re-read with its real id.
+    const pending = messageState !== undefined && messageState !== "SENT";
     return [{
       id: match[2]!,
       channelId: match[1]!,
@@ -428,6 +437,7 @@ export function readDiscordMessageRows(
       text,
       kind,
       edited: Boolean(node.querySelector('[class*="edited"]')),
+      ...(pending ? { pending: true } : {}),
       ...(replyContext
         ? {
             replyTo: {

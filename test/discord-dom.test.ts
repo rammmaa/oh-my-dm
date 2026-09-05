@@ -239,6 +239,10 @@ test("브라우저에서 메시지 행을 읽는다", async (t) => {
         <h3><span id="message-username-14"><span class="username_x">하람</span></span><time datetime="2026-08-16T12:02:00.000Z">오후 9:02</time></h3>
         <div id="message-content-14">내 메시지</div>
       </div></li>
+      <li id="chat-messages-9-9990001"><div class="message_x">
+        <time datetime="2026-08-16T12:02:05.000Z">오후 9:02</time>
+        <div id="message-content-9990001">보내는 중</div>
+      </div></li>
     </ol>
     <script>
       const fiberFor = (authorId, type) => ({ memoizedProps: {}, return: { memoizedProps: { message: { author: { id: authorId }, type } } } });
@@ -247,6 +251,9 @@ test("브라우저에서 메시지 행을 읽는다", async (t) => {
       document.getElementById('chat-messages-9-12')['__reactFiber$test'] = fiberFor('9633', 19);
       document.getElementById('chat-messages-9-13')['__reactFiber$test'] = fiberFor('5638', 7);
       document.getElementById('chat-messages-9-14')['__reactFiber$test'] = fiberFor('5638', 0);
+      const sending = fiberFor('5638', 0);
+      sending.return.memoizedProps.message.state = 'SENDING';
+      document.getElementById('chat-messages-9-9990001')['__reactFiber$test'] = sending;
     </script>
   `);
 
@@ -259,5 +266,6 @@ test("브라우저에서 메시지 행을 읽는다", async (t) => {
     { id: "12", channelId: "9", sender: "Zyø", own: false, timestamp: "2026-08-16T12:00:00.000Z", text: "기대하겠어요", kind: "text", edited: false, replyTo: { sender: "하람", text: "넹!!!!" } },
     { id: "13", channelId: "9", sender: null, own: true, timestamp: "2026-08-16T12:01:00.000Z", text: "하람님이 서버에 참여했습니다.", kind: "system", edited: false },
     { id: "14", channelId: "9", sender: "하람", own: true, timestamp: "2026-08-16T12:02:00.000Z", text: "내 메시지", kind: "text", edited: false },
+    { id: "9990001", channelId: "9", sender: null, own: true, timestamp: "2026-08-16T12:02:05.000Z", text: "보내는 중", kind: "text", edited: false, pending: true },
   ]);
 });
