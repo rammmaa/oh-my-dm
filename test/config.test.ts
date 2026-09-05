@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 
-import { getAppPaths } from "../src/config.js";
+import { getAppPaths, parseProviderList } from "../src/config.js";
 
 test("Instagram과 Discord 브라우저 프로필을 data 디렉터리 아래에 나눠 둔다", () => {
   const paths = getAppPaths({ OH_MY_DM_DATA: "/tmp/oh-my-dm-config-test" });
@@ -10,4 +10,12 @@ test("Instagram과 Discord 브라우저 프로필을 data 디렉터리 아래에
   assert.equal(paths.browserProfileDir, path.join(paths.dataDir, "browser", "instagram"));
   assert.equal(paths.discordProfileDir, path.join(paths.dataDir, "browser", "discord"));
   assert.equal(paths.settingsFile, path.join(paths.dataDir, "settings.json"));
+});
+
+test("OH_MY_DM_PROVIDERS 값을 connector id 목록으로 나눈다", () => {
+  assert.deepEqual(parseProviderList("discord"), ["discord"]);
+  assert.deepEqual(parseProviderList(" Discord , Instagram "), ["discord", "instagram"]);
+  assert.deepEqual(parseProviderList(undefined), []);
+  assert.deepEqual(parseProviderList(""), []);
+  assert.deepEqual(parseProviderList(",, ,"), []);
 });

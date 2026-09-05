@@ -9,6 +9,15 @@ export interface AppPaths {
   settingsFile: string;
 }
 
+// OH_MY_DM_PROVIDERS is a comma-separated allow-list of connector ids to load
+// (e.g. "discord" or "discord,instagram"). An empty value means load them all.
+export function parseProviderList(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter((item) => item.length > 0);
+}
+
 export function getAppPaths(env: NodeJS.ProcessEnv = process.env): AppPaths {
   const newDefault = path.join(os.homedir(), ".oh-my-dm");
   const legacyDefault = path.join(os.homedir(), ".oh-my-chat");

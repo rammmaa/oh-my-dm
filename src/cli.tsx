@@ -5,7 +5,7 @@ import { render } from "ink";
 import React from "react";
 
 import { resolveBrowserExecutable } from "./browser/resolve-browser.js";
-import { getAppPaths } from "./config.js";
+import { getAppPaths, parseProviderList } from "./config.js";
 import { DiscordWebConnector } from "./connectors/discord-web.js";
 import { InstagramWebConnector } from "./connectors/instagram-web.js";
 import { KakaoNativeConnector } from "./connectors/kakao-native.js";
@@ -56,7 +56,7 @@ const cliText = cliLanguage === "ko" ? {
   logout: (label: string) => `${label} 전용 브라우저 프로필을 삭제했습니다.`,
   updating: "oh-my-dm을 최신 버전으로 업데이트합니다…",
   updated: "업데이트가 완료됐습니다. oh-my-dm을 다시 실행하세요.",
-  help: `사용법:\n  oh-my-dm                  TUI 실행\n  oh-my-dm login instagram  Instagram 로그인 세션 생성\n  oh-my-dm login discord    Discord 로그인 세션 생성\n  oh-my-dm update           최신 버전 설치\n  oh-my-dm doctor           로컬 설정 확인\n  oh-my-dm logout instagram Instagram 로그인 세션 삭제\n  oh-my-dm logout discord   Discord 로그인 세션 삭제\n\n옵션:\n  --headed                   디버깅용 브라우저 창 표시`,
+  help: `사용법:\n  oh-my-dm                  TUI 실행\n  oh-my-dm login instagram  Instagram 로그인 세션 생성\n  oh-my-dm login discord    Discord 로그인 세션 생성\n  oh-my-dm update           최신 버전 설치\n  oh-my-dm doctor           로컬 설정 확인\n  oh-my-dm logout instagram Instagram 로그인 세션 삭제\n  oh-my-dm logout discord   Discord 로그인 세션 삭제\n\n옵션:\n  --headed                   디버깅용 브라우저 창 표시\n\n환경 변수:\n  OH_MY_DM_PROVIDERS         켤 connector를 쉼표로 지정 (예: discord)`,
 } : {
   unsupportedProvider: (value: string) => `Unsupported provider: ${value}`,
   login: "Opening Playwright Chromium for login. When finished, press Ctrl+C to exit.",
@@ -64,7 +64,7 @@ const cliText = cliLanguage === "ko" ? {
   logout: (label: string) => `Deleted the dedicated ${label} browser profile.`,
   updating: "Updating oh-my-dm to the latest version…",
   updated: "Update complete. Restart oh-my-dm.",
-  help: `Usage:\n  oh-my-dm                  Start the TUI\n  oh-my-dm login instagram  Create an Instagram login session\n  oh-my-dm login discord    Create a Discord login session\n  oh-my-dm update           Install the latest version\n  oh-my-dm doctor           Check the local setup\n  oh-my-dm logout instagram Delete the Instagram login session\n  oh-my-dm logout discord   Delete the Discord login session\n\nOptions:\n  --headed                   Show the browser window for debugging`,
+  help: `Usage:\n  oh-my-dm                  Start the TUI\n  oh-my-dm login instagram  Create an Instagram login session\n  oh-my-dm login discord    Create a Discord login session\n  oh-my-dm update           Install the latest version\n  oh-my-dm doctor           Check the local setup\n  oh-my-dm logout instagram Delete the Instagram login session\n  oh-my-dm logout discord   Delete the Discord login session\n\nOptions:\n  --headed                   Show the browser window for debugging\n\nEnvironment:\n  OH_MY_DM_PROVIDERS         Comma-separated connectors to load (e.g. discord)`,
 };
 let runtimeSettings = settings;
 let settingsSaveQueue = Promise.resolve();
@@ -102,26 +102,41 @@ if (command !== "chat" && !isWebProvider(provider)) {
     return autoUpdatePromise;
   };
   const headless = !process.argv.includes("--headed");
-  const connector = new UnifiedChatConnector([
+  const connectorFactories: { id: string; label: string; source: string; create: () => ChatConnector }[] = [
     {
       id: "instagram",
       label: "Instagram",
       source: "instagram.com/direct · live DOM + WebSocket",
-      connector: createWebConnector("instagram", headless, true),
+      create: () => createWebConnector("instagram", headless, true),
     },
     {
       id: "kakaotalk",
       label: "KakaoTalk",
       source: "KakaoTalk for macOS · persistent native bridge",
-      connector: new KakaoNativeConnector(),
+      create: () => new KakaoNativeConnector(),
     },
     {
       id: "discord",
       label: "Discord",
       source: "discord.com/channels · live DOM + WebSocket",
-      connector: createWebConnector("discord", headless, true),
+      create: () => createWebConnector("discord", headless, true),
     },
-  ]);
+  ];
+  // Only build the connectors the user asked for. An unknown or empty list
+  // falls back to every connector so the default experience is unchanged.
+  const requestedProviders = parseProviderList(process.env.OH_MY_DM_PROVIDERS);
+  const selectedFactories = requestedProviders.length
+    ? connectorFactories.filter((factory) => requestedProviders.includes(factory.id))
+    : connectorFactories;
+  const activeFactories = selectedFactories.length ? selectedFactories : connectorFactories;
+  const connector = new UnifiedChatConnector(
+    activeFactories.map((factory) => ({
+      id: factory.id,
+      label: factory.label,
+      source: factory.source,
+      connector: factory.create(),
+    })),
+  );
   const app = render(
     <App
       connector={connector}
